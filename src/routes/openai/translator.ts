@@ -266,12 +266,18 @@ export function translateMessages(messages: OpenAIMessage[]): ClaudeMessage[] {
                         if (typeof tc.function.name !== "string" || !tc.function.name) {
                             throw new RequestValidationError(`tool call at index ${index} must include a function name`)
                         }
-                        return {
+                        const toolBlock: any = {
                             type: "tool_use" as const,
                             id: tc.id,
                             name: tc.function.name,
                             input: parseToolCallArguments(tc.function.arguments, index),
                         }
+                        const sig = (tc as any).thought_signature || (tc as any).thoughtSignature
+                        if (sig) {
+                            toolBlock.thought_signature = sig
+                            toolBlock.thoughtSignature = sig
+                        }
+                        return toolBlock
                     }),
                 ],
             }
@@ -377,6 +383,8 @@ export function buildStreamChunk(
             id: tc.id,
             type: "function",
             function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+            ...(tc.thought_signature ? { thought_signature: tc.thought_signature } : {}),
+            ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
         }))
     }
 

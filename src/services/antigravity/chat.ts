@@ -290,6 +290,70 @@ function parseFunctionCallArgs(args: unknown): any {
     return args
 }
 
+interface ThoughtSignatureEntry {
+    signature: string
+    timestamp: number
+}
+
+const THOUGHT_SIGNATURE_CACHE_MAX = 2000
+const THOUGHT_SIGNATURE_CACHE_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours
+
+class ThoughtSignatureCache {
+    private cache = new Map<string, ThoughtSignatureEntry>()
+
+    set(key: string, signature: string) {
+        if (!key || !signature) return
+        if (this.cache.size >= THOUGHT_SIGNATURE_CACHE_MAX) {
+            const firstKey = this.cache.keys().next().value
+            if (firstKey) this.cache.delete(firstKey)
+        }
+        this.cache.set(key, { signature, timestamp: Date.now() })
+    }
+
+    get(key: string): string | undefined {
+        if (!key) return undefined
+        const entry = this.cache.get(key)
+        if (!entry) return undefined
+        if (Date.now() - entry.timestamp > THOUGHT_SIGNATURE_CACHE_TTL_MS) {
+            this.cache.delete(key)
+            return undefined
+        }
+        return entry.signature
+    }
+
+    clear() {
+        this.cache.clear()
+    }
+}
+
+export const thoughtSignatureCache = new ThoughtSignatureCache()
+
+function sortKeysDeep(obj: any): any {
+    if (Array.isArray(obj)) return obj.map(sortKeysDeep)
+    if (obj !== null && typeof obj === "object") {
+        return Object.keys(obj)
+            .sort()
+            .reduce((acc: any, key) => {
+                acc[key] = sortKeysDeep(obj[key])
+                return acc
+            }, {})
+    }
+    return obj
+}
+
+export function getToolSignatureKey(name: string, args: unknown): string {
+    let parsed = args
+    if (typeof args === "string") {
+        try {
+            parsed = JSON.parse(args)
+        } catch {
+            parsed = args
+        }
+    }
+    const normalized = parsed != null && typeof parsed === "object" ? JSON.stringify(sortKeysDeep(parsed)) : String(parsed ?? "")
+    return `${name}:${normalized}`
+}
+
 export async function buildAntigravityParts(
     content: ClaudeMessage["content"],
     toolIdToName: Map<string, string>,
@@ -346,13 +410,25 @@ export async function buildAntigravityParts(
             const toolId = block.id || generateToolUseId()
             const toolName = block.name || toolId
             toolIdToName.set(toolId, toolName)
-            parts.push({
+
+            const signature = (block as any).thoughtSignature
+                || (block as any).thought_signature
+                || thoughtSignatureCache.get(toolId)
+                || thoughtSignatureCache.get(getToolSignatureKey(toolName, block.input))
+                || thoughtSignatureCache.get(`latest:${toolName}`)
+                || thoughtSignatureCache.get("latest")
+
+            const part: any = {
                 functionCall: {
                     name: toolName,
                     args: block.input || {},
                     id: toolId,
                 },
-            })
+            }
+            if (signature) {
+                part.thoughtSignature = signature
+            }
+            parts.push(part)
             continue
         }
 
@@ -560,10 +636,18 @@ function parseApiResponse(rawResponse: string): ChatResponse {
 
     const contentBlocks: ContentBlock[] = []
     let hasToolUse = false
+    let latestThoughtSignature: string | undefined
 
     for (const chunk of chunks) {
-        const parts = chunk.response?.candidates?.[0]?.content?.parts || []
+        const candidate = chunk.response?.candidates?.[0]
+        const candSig = candidate?.thoughtSignature || candidate?.thought_signature
+        if (candSig) latestThoughtSignature = candSig
+
+        const parts = candidate?.content?.parts || []
         for (const part of parts) {
+            const partSig = part.thoughtSignature || part.thought_signature || part.functionCall?.thoughtSignature || part.functionCall?.thought_signature
+            if (partSig) latestThoughtSignature = partSig
+
             if (part.text) {
                 const last = contentBlocks[contentBlocks.length - 1]
                 if (last?.type === "text") last.text = (last.text || "") + part.text
@@ -572,12 +656,25 @@ function parseApiResponse(rawResponse: string): ChatResponse {
             if (part.functionCall) {
                 hasToolUse = true
                 const input = parseFunctionCallArgs(part.functionCall.args)
-                contentBlocks.push({
+                const toolId = part.functionCall.id || generateToolUseId()
+                const signature = partSig || latestThoughtSignature
+                if (signature) {
+                    thoughtSignatureCache.set(toolId, signature)
+                    thoughtSignatureCache.set(getToolSignatureKey(part.functionCall.name, input), signature)
+                    thoughtSignatureCache.set(`latest:${part.functionCall.name}`, signature)
+                    thoughtSignatureCache.set("latest", signature)
+                }
+                const block: any = {
                     type: "tool_use",
-                    id: part.functionCall.id || generateToolUseId(),
+                    id: toolId,
                     name: part.functionCall.name,
                     input,
-                })
+                }
+                if (signature) {
+                    block.thought_signature = signature
+                    block.thoughtSignature = signature
+                }
+                contentBlocks.push(block)
             }
         }
     }
@@ -1329,6 +1426,7 @@ export async function* createChatCompletionStreamWithOptions(
         let hasToolUse = false
         let outputTokens = 0
         let textBlockStarted = false
+        let latestThoughtSignature: string | undefined
 
     const messageStart = {
         type: "message_start",
@@ -1356,9 +1454,16 @@ export async function* createChatCompletionStreamWithOptions(
 
         // chunk 可能直接是响应，也可能包含 response 字段
         const responseData = chunk.response || chunk
-        const parts = responseData?.candidates?.[0]?.content?.parts || []
+        const candidate = responseData?.candidates?.[0]
+        const candSig = candidate?.thoughtSignature || candidate?.thought_signature
+        if (candSig) latestThoughtSignature = candSig
+
+        const parts = candidate?.content?.parts || []
 
         for (const part of parts) {
+            const partSig = part.thoughtSignature || part.thought_signature || part.functionCall?.thoughtSignature || part.functionCall?.thought_signature
+            if (partSig) latestThoughtSignature = partSig
+
             if (part.text) {
                 // 只在第一次遇到文本时发送 block_start
                 if (!textBlockStarted) {
@@ -1378,10 +1483,31 @@ export async function* createChatCompletionStreamWithOptions(
                 }
 
                 hasToolUse = true
-                const toolStart = { type: "content_block_start", index: blockIndex, content_block: { type: "tool_use", id: part.functionCall.id || generateToolUseId(), name: part.functionCall.name, input: {} } }
+                const toolId = part.functionCall.id || generateToolUseId()
+                const rawArgs = part.functionCall.args
+                const parsedArgs = parseFunctionCallArgs(rawArgs)
+                const signature = partSig || latestThoughtSignature
+
+                if (signature) {
+                    thoughtSignatureCache.set(toolId, signature)
+                    thoughtSignatureCache.set(getToolSignatureKey(part.functionCall.name, parsedArgs), signature)
+                    thoughtSignatureCache.set(`latest:${part.functionCall.name}`, signature)
+                    thoughtSignatureCache.set("latest", signature)
+                }
+
+                const toolStart: any = {
+                    type: "content_block_start",
+                    index: blockIndex,
+                    content_block: {
+                        type: "tool_use",
+                        id: toolId,
+                        name: part.functionCall.name,
+                        input: {},
+                        ...(signature ? { thought_signature: signature, thoughtSignature: signature } : {}),
+                    },
+                }
                 yield "event: content_block_start\ndata: " + JSON.stringify(toolStart) + "\n\n"
-                if (part.functionCall.args) {
-                    const rawArgs = part.functionCall.args
+                if (rawArgs) {
                     const partialJson = typeof rawArgs === "string" ? rawArgs : (JSON.stringify(rawArgs) || "{}")
                     const inputDelta = { type: "content_block_delta", index: blockIndex, delta: { type: "input_json_delta", partial_json: partialJson } }
                     yield "event: content_block_delta\ndata: " + JSON.stringify(inputDelta) + "\n\n"

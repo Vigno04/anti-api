@@ -108,7 +108,12 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
             if (block.type === "text") {
                 textContent += block.text || ""
             } else if (block.type === "tool_use") {
-                toolCalls.push({ id: block.id, name: block.name, input: block.input })
+                toolCalls.push({
+                    id: block.id,
+                    name: block.name,
+                    input: block.input,
+                    thought_signature: (block as any).thought_signature || (block as any).thoughtSignature,
+                })
             }
         }
 
@@ -118,6 +123,7 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
                 id: tc.id,
                 type: "function",
                 function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+                ...(tc.thought_signature ? { thought_signature: tc.thought_signature } : {}),
             }))
         }
 
@@ -241,6 +247,7 @@ async function handleStreamCompletion(
                                         name: parsed.content_block.name,
                                         input: {},
                                         arguments: "",
+                                        thought_signature: parsed.content_block.thought_signature || parsed.content_block.thoughtSignature,
                                     }
                                 }
                                 break

@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
-import { buildAntigravityParts, buildGenerationConfig, claudeToAntigravity, getAntigravityModelName } from "~/services/antigravity/chat"
+import {
+    buildAntigravityParts,
+    buildGenerationConfig,
+    claudeToAntigravity,
+    getAntigravityModelName,
+    getToolSignatureKey,
+    thoughtSignatureCache,
+} from "~/services/antigravity/chat"
 
 test("Gemini 3.1 generation config omits legacy safety settings and caps output", async () => {
     expect(buildGenerationConfig("gemini-3.1-pro-low", 100000)).toEqual({ maxOutputTokens: 65536 })
@@ -104,4 +111,47 @@ test("Gemini models without tools omit toolConfig", async () => {
 
     expect(request.request.tools).toBeUndefined()
     expect(request.request.toolConfig).toBeUndefined()
+})
+
+test("buildAntigravityParts injects thoughtSignature from block or cache", async () => {
+    // 1. Explicit signature on block
+    const partsWithBlockSig = await buildAntigravityParts([
+        {
+            type: "tool_use",
+            id: "call_abc123",
+            name: "search_files",
+            input: { path: "/tmp" },
+            thoughtSignature: "sig_direct",
+        } as any,
+    ], new Map())
+
+    expect(partsWithBlockSig[0].thoughtSignature).toBe("sig_direct")
+    expect(partsWithBlockSig[0].functionCall.name).toBe("search_files")
+
+    // 2. Cached by toolId
+    thoughtSignatureCache.set("call_cached_id", "sig_from_cache_id")
+    const partsCachedById = await buildAntigravityParts([
+        {
+            type: "tool_use",
+            id: "call_cached_id",
+            name: "search_files",
+            input: { query: "hello" },
+        },
+    ], new Map())
+
+    expect(partsCachedById[0].thoughtSignature).toBe("sig_from_cache_id")
+
+    // 3. Cached by toolName:args when ID is changed/unknown
+    const argsKey = getToolSignatureKey("search_files", { target: "files", order: "discovery" })
+    thoughtSignatureCache.set(argsKey, "sig_from_cache_args")
+    const partsCachedByArgs = await buildAntigravityParts([
+        {
+            type: "tool_use",
+            id: "call_unknown_id",
+            name: "search_files",
+            input: { order: "discovery", target: "files" }, // note key order difference to verify canonicalization
+        },
+    ], new Map())
+
+    expect(partsCachedByArgs[0].thoughtSignature).toBe("sig_from_cache_args")
 })

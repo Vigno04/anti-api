@@ -29,7 +29,7 @@ test("translateMessages converts system to user", () => {
     expect(result[0].role).toBe("user")
 })
 
-test("translateMessages handles tool calls", () => {
+test("translateMessages handles tool calls and preserves thought_signature", () => {
     const messages = [
         {
             role: "assistant" as const,
@@ -37,8 +37,9 @@ test("translateMessages handles tool calls", () => {
             tool_calls: [{
                 id: "call_1",
                 type: "function" as const,
-                function: { name: "get_weather", arguments: '{"city":"Tokyo"}' }
-            }]
+                function: { name: "get_weather", arguments: '{"city":"Tokyo"}' },
+                thought_signature: "sig_test_123",
+            } as any]
         }
     ]
     const result = translateMessages(messages)
@@ -47,6 +48,8 @@ test("translateMessages handles tool calls", () => {
     const content = result[0].content as any[]
     expect(content[0].type).toBe("tool_use")
     expect(content[0].name).toBe("get_weather")
+    expect(content[0].thought_signature).toBe("sig_test_123")
+    expect(content[0].thoughtSignature).toBe("sig_test_123")
 })
 
 test("translateMessages handles tool results", () => {
