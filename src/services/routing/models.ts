@@ -1,4 +1,5 @@
-import { AVAILABLE_MODELS } from "~/lib/config"
+import { AVAILABLE_MODELS, getAvailableModels } from "~/lib/config"
+import { isSeparateThinkingModelsEnabled } from "./config"
 import type { AuthProvider } from "~/services/auth/types"
 
 export interface ProviderModelOption {
@@ -156,8 +157,17 @@ export function clearAllDynamicCodexModelsByAccount(): void {
     dynamicCodexModelsByAccount.clear()
 }
 
+function isInternalAntigravityModel(id: string): boolean {
+    const lower = id.toLowerCase()
+    return lower.startsWith("tab_") ||
+           lower.startsWith("chat_") ||
+           lower.includes("tiered") ||
+           lower.includes("extra-low")
+}
+
 export function setDynamicAntigravityModels(models: ProviderModelOption[]): void {
-    dynamicAntigravityModels = sanitizeModelOptions(models, "Antigravity")
+    const filtered = (models || []).filter(m => !isInternalAntigravityModel(m.id))
+    dynamicAntigravityModels = sanitizeModelOptions(filtered, "Antigravity")
 }
 
 export function clearDynamicAntigravityModels(): void {
@@ -168,8 +178,10 @@ export function clearDynamicAntigravityModels(): void {
 export function setDynamicAntigravityModelsForAccount(accountId: string, models: ProviderModelOption[]): void {
     const id = accountId?.trim()
     if (!id) return
-    dynamicAntigravityModelsByAccount.set(id, sanitizeModelOptions(models, "Antigravity"))
+    const filtered = (models || []).filter(m => !isInternalAntigravityModel(m.id))
+    dynamicAntigravityModelsByAccount.set(id, sanitizeModelOptions(filtered, "Antigravity"))
 }
+
 
 export function clearDynamicAntigravityModelsForAccount(accountId: string): void {
     dynamicAntigravityModelsByAccount.delete(accountId)
@@ -248,18 +260,24 @@ export function clearAllDynamicGrokModelsByAccount(): void {
     dynamicGrokModelsByAccount.clear()
 }
 
-export function getProviderModels(provider: AuthProvider): ProviderModelOption[] {
+export function getProviderModels(provider: AuthProvider, options?: { includeAllVariants?: boolean }): ProviderModelOption[] {
     if (provider === "antigravity") {
-        const staticModels = AVAILABLE_MODELS.map(model => ({
+        const separateThinking = options?.includeAllVariants ? true : isSeparateThinkingModelsEnabled()
+        const staticModels = getAvailableModels({ separateThinking }).map(model => ({
             id: model.id,
             label: model.name,
         }))
+        if (!separateThinking) {
+            return staticModels
+        }
         return mergeModelOptions(
             flattenDynamicModelsByAccount(dynamicAntigravityModelsByAccount),
             dynamicAntigravityModels,
             staticModels
         )
     }
+
+
 
     if (provider === "copilot") {
         return mergeModelOptions(
@@ -324,13 +342,18 @@ export function getProviderModelsForAccount(provider: AuthProvider, accountId: s
         return getProviderModels(provider)
     }
     if (provider === "antigravity") {
+        const separateThinking = isSeparateThinkingModelsEnabled()
+        const staticModels = getAvailableModels({ separateThinking }).map(model => ({ id: model.id, label: model.name }))
+        if (!separateThinking) {
+            return staticModels
+        }
         const dynamic = dynamicAntigravityModelsByAccount.get(accountId)
         if (dynamic && dynamic.length > 0) {
-            const staticModels = AVAILABLE_MODELS.map(model => ({ id: model.id, label: model.name }))
             return mergeModelOptions(dynamic, staticModels)
         }
         return getProviderModels(provider)
     }
+
     if (provider === "zed") {
         const dynamic = dynamicZedModelsByAccount.get(accountId)
         if (dynamic && dynamic.length > 0) {

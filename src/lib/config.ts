@@ -6,27 +6,43 @@
 // 默认端口
 export const DEFAULT_PORT = 8964
 
-// 支持的模型列表（用于/v1/models端点）
-// 只显示 7 个配额面板可见且已确认可用的模型
-export const AVAILABLE_MODELS = [
-    // Claude 4.5 系列
-    { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "claude-sonnet-4-5-thinking", name: "Claude Sonnet 4.5 (Thinking)" },
-    { id: "claude-opus-4-5-thinking", name: "Claude Opus 4.5 (Thinking)" },
+// Modelli puliti/unificati (standard OpenAI con supporto a reasoning_effort)
+export const BASE_OFFICIAL_MODELS = [
+    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+    { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+    { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite" },
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
-
-    // Gemini 3 系列
-    { id: "gemini-3-pro-high", name: "Gemini 3 Pro (High)" },
-    { id: "gemini-3-pro-low", name: "Gemini 3 Pro (Low)" },
+    { id: "gpt-oss-120b", name: "GPT-OSS 120B" },
+    // Versioni precedenti / legacy per compatibilità
     { id: "gemini-3-flash", name: "Gemini 3 Flash" },
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite" },
+    { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+]
 
-    // Gemini 3.1 系列（Antigravity 当前可用的稳定 ID）
+// Varianti esplicite di thinking
+export const THINKING_VARIANT_MODELS = [
+    { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
+    { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)" },
+    { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)" },
     { id: "gemini-3.1-pro-high", name: "Gemini 3.1 Pro (High)" },
     { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)" },
-    { id: "gemini-3.1-flash", name: "Gemini 3.1 Flash" },
-    { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite" },
-
-    // GPT-OSS
-    { id: "gpt-oss-120b", name: "GPT-OSS 120B (Medium)" },
+    { id: "gemini-3-pro-high", name: "Gemini 3 Pro (High)" },
+    { id: "gemini-3-pro-low", name: "Gemini 3 Pro (Low)" },
+    { id: "gemini-2.5-flash-thinking", name: "Gemini 2.5 Flash (Thinking)" },
+    { id: "claude-sonnet-4-5-thinking", name: "Claude Sonnet 4.5 (Thinking)" },
+    { id: "claude-opus-4-5-thinking", name: "Claude Opus 4.5 (Thinking)" },
+    { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
 ]
+
+export function getAvailableModels(options?: { separateThinking?: boolean }): Array<{ id: string; name: string }> {
+    if (options?.separateThinking) {
+        return [...BASE_OFFICIAL_MODELS, ...THINKING_VARIANT_MODELS]
+    }
+    return BASE_OFFICIAL_MODELS
+}
+
+// Retrocompatibilità
+export const AVAILABLE_MODELS = [...BASE_OFFICIAL_MODELS, ...THINKING_VARIANT_MODELS]

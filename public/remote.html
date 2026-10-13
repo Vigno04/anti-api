@@ -246,7 +246,7 @@
     <div id="toast-container" class="fixed bottom-8 right-8 z-50"></div>
 
     <script>
-        const API_BASE = 'http://localhost:8964';
+        const API_BASE = window.location.origin;
         const LANGUAGE_STORAGE_KEY = 'anti-api-language';
         function detectPreferredLanguage() {
             const candidates = [];
@@ -305,6 +305,29 @@
                 'remote.copied': 'URL 已复制到剪贴板',
                 'remote.copyFailed': '复制失败',
                 'remote.clickToCopy': '点击复制 URL：',
+            },
+            it: {
+                'remote.title': 'Remoto',
+                'remote.subtitle': 'Collega un gateway di inferenza compatibile con il protocollo tramite un tunnel di terze parti',
+                'remote.securityNotice': 'ngrok è un servizio tunnel di terze parti. Esponi solo il gateway di inferenza protetto da token, mai questa dashboard o il pannello di controllo.',
+                'remote.tokenPlaceholder': 'Inserisci un nuovo authtoken ngrok',
+                'remote.tokenConfigured': 'Token salvato configurato ({masked}). Lascia il campo vuoto per riutilizzarlo.',
+                'remote.tokenNotConfigured': 'Nessun token salvato configurato.',
+                'remote.clearToken': 'Cancella il token salvato all\'avvio',
+                'remote.getToken': 'Ottieni Token',
+                'remote.start': 'Avvia',
+                'remote.stop': 'Arresta',
+                'remote.notConnected': 'Non connesso',
+                'remote.starting': 'Avvio in corso...',
+                'remote.connected': 'Connesso',
+                'remote.started': 'ngrok avviato con successo',
+                'remote.startingWait': 'Avvio in corso, in attesa dell\'URL...',
+                'remote.failedToStart': 'Avvio non riuscito',
+                'remote.stopped': 'ngrok arrestato',
+                'remote.noUrl': 'Nessun URL da copiare',
+                'remote.copied': 'URL copiato negli appunti',
+                'remote.copyFailed': 'Copia non riuscita',
+                'remote.clickToCopy': 'Fai clic per copiare l\'URL:',
             }
         };
 

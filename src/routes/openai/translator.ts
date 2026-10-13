@@ -20,9 +20,56 @@ const MODEL_MAPPING: Record<string, string> = {
     "o1-mini": "gemini-2.0-flash-exp",
 }
 
-export function mapModel(openaiModel: string): string {
-    return MODEL_MAPPING[openaiModel] || openaiModel
+export function mapModel(openaiModel: string, reasoningEffort?: "low" | "medium" | "high"): string {
+    const raw = MODEL_MAPPING[openaiModel] || openaiModel
+    const norm = raw.trim().toLowerCase().replace(/[._]/g, "-")
+
+    if (norm === "gemini-3-8-flash" || norm === "gemini-3-8-flash-preview") {
+        if (reasoningEffort === "low") return "gemini-3.8-flash-low"
+        if (reasoningEffort === "high") return "gemini-3.8-flash-high"
+        return "gemini-3.8-flash-medium"
+    }
+    if (norm === "gemini-3-7-flash") {
+        if (reasoningEffort === "low") return "gemini-3.7-flash-low"
+        if (reasoningEffort === "high") return "gemini-3.7-flash-high"
+        return "gemini-3.7-flash-medium"
+    }
+    if (norm === "gemini-3-6-flash") {
+        if (reasoningEffort === "low") return "gemini-3.6-flash-low"
+        if (reasoningEffort === "high") return "gemini-3.6-flash-high"
+        return "gemini-3.6-flash-medium"
+    }
+    if (norm === "gemini-3-5-flash-lite") {
+        return "gemini-3.5-flash-lite"
+    }
+    if (norm === "gemini-3-1-pro" || norm === "gemini-3-1-pro-preview") {
+        return reasoningEffort === "low" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high"
+    }
+    if (norm === "gemini-3-pro") {
+        return reasoningEffort === "low" ? "gemini-3-pro-low" : "gemini-3-pro-high"
+    }
+    if (norm === "gemini-2-5-flash") {
+        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
+            ? "gemini-2.5-flash-thinking"
+            : "gemini-2.5-flash"
+    }
+    if (norm === "claude-sonnet-4-6" || norm === "claude-sonnet-4.6") {
+        return "claude-sonnet-4-6"
+    }
+    if (norm === "claude-sonnet-4-5") {
+        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
+            ? "claude-sonnet-4-5-thinking"
+            : "claude-sonnet-4-5"
+    }
+    if (norm === "claude-opus-4-6") {
+        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
+            ? "claude-opus-4-6-thinking"
+            : "claude-opus-4-6-thinking"
+    }
+
+    return raw
 }
+
 
 const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_INLINE_IMAGE_BASE64_CHARS = Math.ceil(MAX_INLINE_IMAGE_BYTES / 3) * 4

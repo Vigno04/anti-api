@@ -541,7 +541,11 @@
                         <h2 class="text-sm uppercase tracking-[0.2em] text-gray-500" data-i18n="routing.accountChain">Account Chain</h2>
                         <p class="text-xs text-gray-600 mt-1" data-i18n="routing.accountChainDesc">Ordered provider/account fallback.</p>
                     </div>
-                    <div class="flex items-center gap-2 text-xs text-gray-400">
+                    <div class="flex items-center gap-3 text-xs text-gray-400">
+                        <label class="flex items-center gap-2 cursor-pointer" title="Mostra modelli con thinking separati (-low, -high, -thinking) in /v1/models">
+                            <input id="separate-thinking-switch" type="checkbox" class="toggle-switch">
+                            <span>Separate Thinking</span>
+                        </label>
                         <label class="flex items-center gap-2 cursor-pointer">
                             <input id="smart-switch" type="checkbox" class="toggle-switch">
                             <span data-i18n="routing.smartSwitch">Smart Switch</span>
@@ -551,6 +555,7 @@
                             <span data-i18n="common.save">Save</span>
                         </button>
                     </div>
+
                 </div>
 
                 <div id="account-route-title" class="text-sm text-gray-400 mb-3 flex-shrink-0" data-i18n="routing.selectModel">Select a model</div>
@@ -577,7 +582,7 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8964';
+        const API_BASE = window.location.origin;
         const STORAGE_KEYS = {
             activeFlow: 'anti-api-active-flow',
             privacyMode: 'anti-api-privacy-mode',
@@ -764,6 +769,56 @@
                 'status.saving': '保存中...',
                 'status.flowNameRequired': '需要流程名称',
                 'status.flowNameExists': '流程名称已存在',
+            },
+            it: {
+                'common.add': 'Aggiungi',
+                'common.new': 'Nuovo',
+                'common.save': 'Salva',
+                'common.refresh': 'Aggiorna',
+                'routing.title': 'Routing',
+                'routing.subtitle': 'Costruisci catene di affidabilità con failover per gli account autorizzati',
+                'routing.flowRouting': 'Routing Flusso',
+                'routing.accountRouting': 'Routing Account',
+                'routing.backToQuota': 'Torna a Quota',
+                'routing.accounts': 'Account',
+                'routing.accountsDesc': 'Trascina un blocco modello nel flusso.',
+                'routing.flow': 'Flusso',
+                'routing.flowDesc': 'Corrispondenza per nome del modello nelle richieste.',
+                'routing.modelId': 'ID Modello',
+                'routing.saved': 'Salvati',
+                'routing.savedDesc': 'Modifica, rinomina o elimina i flussi salvati.',
+                'routing.models': 'Modelli',
+                'routing.modelsDesc': 'Solo ID modello nativi del provider.',
+                'routing.accountChain': 'Catena Account',
+                'routing.accountChainDesc': 'Fallback ordinato provider/account.',
+                'routing.smartSwitch': 'Smart Switch',
+                'routing.selectModel': 'Seleziona un modello',
+                'routing.modelPrefix': 'Modello',
+                'routing.provider': 'Provider',
+                'routing.account': 'Account',
+                'routing.autoSmart': 'Auto (Smart Switch)',
+                'routing.smartHint': 'Smart Switch attivo: le voci automatiche si espandono per ordine dell\'account.',
+                'routing.manualHint': 'Smart Switch disattivo: configura account espliciti per ciascun modello.',
+                'routing.noOfficialModels': 'Nessun modello nativo del provider disponibile.',
+                'routing.noEntries': 'Nessuna voce presente.',
+                'routing.noAccounts': 'Nessun account presente. Aggiungi account da /quota.',
+                'routing.noSavedFlows': 'Nessun flusso salvato.',
+                'routing.editing': 'Modifica in corso',
+                'routing.edit': 'Modifica',
+                'routing.delete': 'Elimina',
+                'routing.remove': 'Rimuovi',
+                'routing.up': 'Su',
+                'routing.down': 'Giù',
+                'routing.dropHere': 'Trascina qui',
+                'routing.hops': 'salti',
+                'routing.flowFallback': 'fallback su 429',
+                'status.refreshing': 'Aggiornamento in corso...',
+                'status.refreshed': 'Aggiornato',
+                'status.refreshFailed': 'Aggiornamento non riuscito',
+                'status.saved': 'Salvato',
+                'status.saving': 'Salvataggio in corso...',
+                'status.flowNameRequired': 'Nome del flusso obbligatorio',
+                'status.flowNameExists': 'Nome del flusso già esistente',
             }
         };
 
@@ -904,6 +959,16 @@
                     void persistAccountRoutingOnly();
                 };
             }
+
+            const separateThinkingInput = dom.byId('separate-thinking-switch');
+            if (separateThinkingInput) {
+                separateThinkingInput.checked = !!accountRouting.separateThinkingModels;
+                separateThinkingInput.onchange = () => {
+                    accountRouting.separateThinkingModels = separateThinkingInput.checked;
+                    void persistAccountRoutingOnly();
+                };
+            }
+
 
             renderAccountModels();
             if (!selectedAccountModelId && officialModels.length > 0) {

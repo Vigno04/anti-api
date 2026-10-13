@@ -150,22 +150,35 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 }
 
 const MODEL_MAPPING: Record<string, string> = {
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
     "claude-sonnet-4-5": "claude-sonnet-4-5",
+    "claude-sonnet-4.5": "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+    "claude-sonnet-4.5-thinking": "claude-sonnet-4-5-thinking",
+    "claude-sonnet-4-5-20251001": "claude-sonnet-4-5",
     "claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
     "claude-opus-4-6": "claude-opus-4-6-thinking",
     "claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
-    "claude-sonnet-4.5": "claude-sonnet-4-5",
-    "claude-sonnet-4.5-thinking": "claude-sonnet-4-5-thinking",
-    "claude-opus-4.5-thinking": "claude-opus-4-5-thinking",
-    "claude-opus-4.6": "claude-opus-4-6-thinking",
-    "claude-opus-4.6-thinking": "claude-opus-4-6-thinking",
-    "claude-sonnet-4-5-20251001": "claude-sonnet-4-5",
+    "gemini-3.8-flash": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-high": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low": "gemini-3.8-flash-low",
+    "gemini-3.7-flash": "gemini-3.7-flash-medium",
+    "gemini-3.7-flash-high": "gemini-3.7-flash-high",
+    "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
+    "gemini-3.7-flash-low": "gemini-3.7-flash-low",
+    "gemini-3.6-flash": "gemini-3.6-flash-medium",
+    "gemini-3.6-flash-high": "gemini-3.6-flash-high",
+    "gemini-3.6-flash-medium": "gemini-3.6-flash-medium",
+    "gemini-3.6-flash-low": "gemini-3.6-flash-low",
+    "gemini-3.5-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-3-pro": "gemini-3-pro-high",
     "gemini-3-pro-high": "gemini-3-pro-high",
     "gemini-3-pro-low": "gemini-3-pro-low",
     "gemini-3-flash": "gemini-3-flash",
-    "gemini-3.1-pro": "gemini-3.1-pro",
-    "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
+    "gemini-3.1-pro": "gemini-pro-agent",
+    "gemini-3.1-pro-preview": "gemini-pro-agent",
     // Antigravity exposes the public "Pro (High)" tier as this native ID.
     "gemini-3.1-pro-high": "gemini-pro-agent",
     "gemini-3.1-pro-low": "gemini-3.1-pro-low",
@@ -174,8 +187,12 @@ const MODEL_MAPPING: Record<string, string> = {
     "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite-preview",
     "gemini-3.1-flash-image": "gemini-3.1-flash-image",
     "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image-preview",
+    "gemini-2.5-pro": "gemini-2.5-pro",
+    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini-2.5-flash-thinking": "gemini-2.5-flash-thinking",
     "gpt-oss-120b": "gpt-oss-120b-medium",
 }
+
 
 export function getAntigravityModelName(userModel: string): string {
     return MODEL_MAPPING[userModel] || userModel
@@ -455,7 +472,7 @@ function buildFunctionCallingConfig(toolChoice?: ChatRequest["toolChoice"]): any
 }
 
 function isGemini31Model(model: string): boolean {
-    return /^gemini-3\.1-/i.test(model) || model === "gemini-pro-agent"
+    return /^gemini-3\./i.test(model) || model === "gemini-pro-agent" || /^gemini-3-/i.test(model)
 }
 
 /** Keep generation settings within the limits accepted by each native model family. */

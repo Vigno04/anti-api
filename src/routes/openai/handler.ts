@@ -71,12 +71,13 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
 
         await rateLimiter.wait()
 
-        const anthropicModel = mapModel(payload.model)
+        const reasoningEffort = extractReasoningEffort(payload)
+        const anthropicModel = mapModel(payload.model, reasoningEffort)
         const messages = translateMessages(payload.messages)
         // Validate image count and inline byte budgets before routing to any provider.
         createImageInputBudget(messages)
         const tools = translateTools(payload.tools)
-        const reasoningEffort = extractReasoningEffort(payload)
+
 
         if (payload.stream) {
             return handleStreamCompletion(c, payload, anthropicModel, messages, tools, reasoningEffort)

@@ -517,9 +517,14 @@ routingRouter.post("/config", async (c) => {
 
     let accountRouting: AccountRoutingConfig | undefined
     if (body.accountRouting) {
+        const currentConfig = loadRoutingConfig()
         accountRouting = {
-            smartSwitch: body.accountRouting.smartSwitch ?? false,
+            smartSwitch: body.accountRouting.smartSwitch ?? currentConfig.accountRouting?.smartSwitch ?? false,
+            separateThinkingModels: body.accountRouting.separateThinkingModels !== undefined
+                ? !!body.accountRouting.separateThinkingModels
+                : currentConfig.accountRouting?.separateThinkingModels ?? false,
             routes: Array.isArray(body.accountRouting.routes)
+
                 ? body.accountRouting.routes.map(route => ({
                     id: route.id || randomUUID(),
                     modelId: (route.modelId || "").trim(),

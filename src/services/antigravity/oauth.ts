@@ -352,10 +352,21 @@ export async function fetchJson(
 /**
  * OAuth 回调服务器
  */
-interface OAuthCallbackResult {
+export interface OAuthCallbackResult {
     code?: string
     state?: string
     error?: string
+}
+
+let globalOAuthCallbackResolve: ((result: OAuthCallbackResult) => void) | null = null
+
+export function dispatchOAuthCallback(code?: string, state?: string, error?: string): boolean {
+    if (globalOAuthCallbackResolve) {
+        globalOAuthCallbackResolve({ code, state, error })
+        globalOAuthCallbackResolve = null
+        return true
+    }
+    return false
 }
 
 export function startOAuthCallbackServer(options: OAuthCallbackServerOptions = {}): Promise<{
@@ -367,6 +378,13 @@ export function startOAuthCallbackServer(options: OAuthCallbackServerOptions = {
         let callbackResolve: ((result: OAuthCallbackResult) => void) | null = null
         const callbackPromise = new Promise<OAuthCallbackResult>((res) => {
             callbackResolve = res
+            globalOAuthCallbackResolve = (result) => {
+                if (callbackResolve) {
+                    callbackResolve(result)
+                    callbackResolve = null
+                }
+                globalOAuthCallbackResolve = null
+            }
         })
 
         const startPort = options.port || OAUTH_CONFIG.callbackPort
@@ -397,6 +415,7 @@ export function startOAuthCallbackServer(options: OAuthCallbackServerOptions = {
                                 callbackResolve({ code: code || undefined, state: state || undefined, error: error || undefined })
                                 callbackResolve = null
                             }
+                            globalOAuthCallbackResolve = null
 
                             // Redirect to official success page
                             return Response.redirect("https://antigravity.google/auth-success", 302)

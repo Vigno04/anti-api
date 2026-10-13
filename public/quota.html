@@ -355,6 +355,10 @@
                 class="tab-btn px-5 py-2 rounded-lg font-bold text-sm transition-all duration-200 text-gray-400 hover:text-gray-200">
                 <span data-i18n="nav.routing">Routing</span> <span class="text-[10px] text-gray-500" data-i18n="nav.beta">(Beta)</span>
             </button>
+            <button onclick="switchTab('api')" id="tab-api"
+                class="tab-btn px-5 py-2 rounded-lg font-bold text-sm transition-all duration-200 text-gray-400 hover:text-gray-200">
+                <span data-i18n="nav.api">API</span>
+            </button>
             <button onclick="switchTab('logs')" id="tab-logs"
                 class="tab-btn px-5 py-2 rounded-lg font-bold text-sm transition-all duration-200 text-gray-400 hover:text-gray-200">
                 <span data-i18n="nav.logs">Logs</span>
@@ -538,6 +542,111 @@
             </div>
         </div>
 
+        <!-- ==================== API TAB ==================== -->
+        <div id="tab-content-api" class="tab-content hidden">
+            <!-- Header -->
+            <div class="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-300 flex items-center gap-2">
+                        <span data-i18n="api.title">API & Models</span>
+                        <span id="api-exposed-count-badge" class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-mono">...</span>
+                    </h1>
+                    <p class="text-gray-500 text-sm font-bold mt-1" data-i18n="api.subtitle">Manage exposed models, filter policies, and OpenAI endpoint settings</p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="loadApiTabContent()" class="refresh-btn px-4 py-2 rounded-lg font-bold text-gray-300 text-sm flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        <span data-i18n="common.refresh">Refresh</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Endpoint Quick Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="p-4 rounded-xl border border-gray-800 bg-black/40 backdrop-blur-sm flex flex-col justify-between">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold" data-i18n="api.baseUrl">Base URL</div>
+                    <div class="flex items-center justify-between gap-2 mt-2">
+                        <code id="api-base-url-code" class="text-sm font-mono text-cyan-400 truncate">.../v1</code>
+                        <button onclick="copyToClipboard(document.getElementById('api-base-url-code').textContent)" class="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors" title="Copy">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-4 rounded-xl border border-gray-800 bg-black/40 backdrop-blur-sm flex flex-col justify-between">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold" data-i18n="api.modelsUrl">Models Endpoint</div>
+                    <div class="flex items-center justify-between gap-2 mt-2">
+                        <code id="api-models-url-code" class="text-sm font-mono text-purple-400 truncate">.../v1/models</code>
+                        <button onclick="copyToClipboard(document.getElementById('api-models-url-code').textContent)" class="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors" title="Copy">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-4 rounded-xl border border-gray-800 bg-black/40 backdrop-blur-sm flex flex-col justify-between">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold" data-i18n="api.chatUrl">Chat Endpoint</div>
+                    <div class="flex items-center justify-between gap-2 mt-2">
+                        <code id="api-chat-url-code" class="text-sm font-mono text-emerald-400 truncate">.../v1/chat/completions</code>
+                        <button onclick="copyToClipboard(document.getElementById('api-chat-url-code').textContent)" class="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors" title="Copy">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Policy Controls (Final Filter) -->
+            <div class="rounded-xl border border-gray-800 bg-black/40 p-5 mb-6">
+                <div class="mb-4">
+                    <h2 class="text-lg font-bold text-gray-200" data-i18n="api.filterPolicies">Exposure Filters</h2>
+                    <p class="text-xs text-gray-500 mt-0.5" data-i18n="api.filterPoliciesDesc">Configure which models are advertised on /v1/models</p>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Latest Only -->
+                    <label class="flex items-start justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 bg-gray-900/30 transition-colors cursor-pointer">
+                        <div class="pr-3">
+                            <div class="text-sm font-medium text-gray-200" data-i18n="api.latestOnly">Latest Models Only</div>
+                            <div class="text-xs text-gray-500 mt-1" data-i18n="api.latestOnlyDesc">Expose only the newest flagship model per family (3.8 Flash, 3.1 Pro, Sonnet 4.6), hiding older generations (2.5/3.6/3.7)</div>
+                        </div>
+                        <input type="checkbox" id="api-filter-latest-only" onchange="handleApiFilterChange('latestModelsOnly', this.checked)" class="toggle-switch mt-1 flex-shrink-0">
+                    </label>
+
+                    <!-- Only Active Providers -->
+                    <label class="flex items-start justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 bg-gray-900/30 transition-colors cursor-pointer">
+                        <div class="pr-3">
+                            <div class="text-sm font-medium text-gray-200" data-i18n="api.activeProvidersOnly">Active Providers Only</div>
+                            <div class="text-xs text-gray-500 mt-1" data-i18n="api.activeProvidersOnlyDesc">Hide providers without authenticated accounts (Copilot, Codex, Kiro, Grok)</div>
+                        </div>
+                        <input type="checkbox" id="api-filter-active-providers" onchange="handleApiFilterChange('onlyActiveProviders', this.checked)" class="toggle-switch mt-1 flex-shrink-0">
+                    </label>
+
+                    <!-- Separate Thinking Models -->
+                    <label class="flex items-start justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 bg-gray-900/30 transition-colors cursor-pointer">
+                        <div class="pr-3">
+                            <div class="text-sm font-medium text-gray-200" data-i18n="api.separateThinking">Separate Thinking Models</div>
+                            <div class="text-xs text-gray-500 mt-1" data-i18n="api.separateThinkingDesc">Expose explicit suffix variants (-high, -medium, -low, -thinking) as standalone model IDs</div>
+                        </div>
+                        <input type="checkbox" id="api-filter-separate-thinking" onchange="handleApiFilterChange('separateThinkingModels', this.checked)" class="toggle-switch mt-1 flex-shrink-0">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Live Models Catalog & Allowlist -->
+            <div class="rounded-xl border border-gray-800 bg-black/40 p-5">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-200" data-i18n="api.catalogTitle">Models Catalog</h2>
+                        <p id="api-stats-text" class="text-xs text-gray-500 mt-0.5" data-i18n="api.catalogDesc">Real-time overview of available models and exposure status</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <input type="text" id="api-model-search" oninput="filterApiModelsList()" placeholder="Search models..." data-i18n-placeholder="api.searchPlaceholder"
+                            class="bg-black/50 border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-300 placeholder-gray-600 outline-none focus:border-cyan-500/50 w-64">
+                    </div>
+                </div>
+
+                <div id="api-models-container" class="space-y-2 max-h-[600px] overflow-y-auto pr-1">
+                    <div class="text-xs text-gray-500 p-4 text-center" data-i18n="common.loading">Loading...</div>
+                </div>
+            </div>
+        </div>
+
         <!-- ==================== SETTINGS TAB ==================== -->
         <div id="tab-content-settings" class="tab-content hidden">
             <div class="mb-6">
@@ -557,6 +666,7 @@
                         <select id="setting-language"
                             class="bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-300 outline-none hover:border-gray-500">
                             <option value="en">English</option>
+                            <option value="it">Italiano</option>
                             <option value="zh-CN">中文</option>
                         </select>
                     </label>
@@ -897,7 +1007,7 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8964';
+        const API_BASE = window.location.origin;
         const CODEX_SESSION_KEY = 'anti-api-codex-session';
         const LANGUAGE_STORAGE_KEY = 'anti-api-language';
         let loadingDismissed = false;
@@ -925,7 +1035,10 @@
                 const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale;
                 if (intlLocale) candidates.push(intlLocale);
             } catch { }
-            return candidates.join(' ').toLowerCase().includes('zh') ? 'zh-CN' : 'en';
+            const str = candidates.join(' ').toLowerCase();
+            if (str.includes('it')) return 'it';
+            if (str.includes('zh')) return 'zh-CN';
+            return 'en';
         }
         let currentLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY) || detectPreferredLanguage();
 
@@ -1050,6 +1163,31 @@
                 'status.refreshing': 'Refreshing...',
                 'status.refreshed': 'Refreshed',
                 'status.failed': 'Failed: {message}',
+                'nav.api': 'API',
+                'api.title': 'API & Models',
+                'api.subtitle': 'Manage exposed models, filter policies, and OpenAI endpoint settings',
+                'api.baseUrl': 'Base URL',
+                'api.modelsUrl': 'Models Endpoint',
+                'api.chatUrl': 'Chat Endpoint',
+                'api.filterPolicies': 'Exposure Filters',
+                'api.filterPoliciesDesc': 'Configure which models are advertised on /v1/models',
+                'api.latestOnly': 'Latest Models Only',
+                'api.latestOnlyDesc': 'Expose only the newest flagship model per family (3.8 Flash, 3.1 Pro, Sonnet 4.6), hiding older generations (2.5/3.6/3.7)',
+                'api.activeProvidersOnly': 'Active Providers Only',
+                'api.activeProvidersOnlyDesc': 'Hide providers without authenticated accounts (Copilot, Codex, Kiro, Grok)',
+                'api.separateThinking': 'Separate Thinking Models',
+                'api.separateThinkingDesc': 'Expose explicit suffix variants (-high, -medium, -low, -thinking) as standalone model IDs',
+                'api.catalogTitle': 'Models Catalog',
+                'api.catalogDesc': 'Real-time overview of available models and exposure status',
+                'api.searchPlaceholder': 'Search models...',
+                'api.statusExposed': 'Exposed',
+                'api.statusHidden': 'Hidden',
+                'api.badgeLatest': 'Latest',
+                'api.badgeLegacy': 'Legacy',
+                'api.badgeThinking': 'Thinking',
+                'api.badgeBase': 'Base',
+                'api.filterStats': '{exposed} of {total} models exposed on /v1/models',
+                'api.saveSuccess': 'API model settings updated!',
                 'quota.connectionFailed': 'Connection failed',
                 'quota.connectionUnable': 'Unable to connect to {base}',
                 'quota.retry': 'Retry',
@@ -1221,6 +1359,31 @@
                 'status.refreshing': '刷新中...',
                 'status.refreshed': '已刷新',
                 'status.failed': '失败：{message}',
+                'nav.api': 'API',
+                'api.title': 'API与模型',
+                'api.subtitle': '管理已暴露的模型、过滤策略及OpenAI端点设置',
+                'api.baseUrl': '基础URL',
+                'api.modelsUrl': '模型端点',
+                'api.chatUrl': '对话端点',
+                'api.filterPolicies': '暴露过滤规则',
+                'api.filterPoliciesDesc': '配置在 /v1/models 中展示哪些模型',
+                'api.latestOnly': '仅最新旗舰模型',
+                'api.latestOnlyDesc': '仅保留各系列最新旗舰模型（如 3.8 Flash、3.1 Pro、Sonnet 4.6），隐藏历史版本（2.5/3.6/3.7）',
+                'api.activeProvidersOnly': '仅已授权提供商',
+                'api.activeProvidersOnlyDesc': '隐藏未配置账号的提供商（如 Copilot、Codex、Kiro、Grok）',
+                'api.separateThinking': '独立Thinking模型',
+                'api.separateThinkingDesc': '将思考变体（-high, -medium, -low, -thinking）作为独立模型暴露',
+                'api.catalogTitle': '实时模型目录',
+                'api.catalogDesc': '查看全部可用模型及其实时暴露状态',
+                'api.searchPlaceholder': '搜索模型...',
+                'api.statusExposed': '已暴露',
+                'api.statusHidden': '已隐藏',
+                'api.badgeLatest': '最新',
+                'api.badgeLegacy': '旧版',
+                'api.badgeThinking': 'Thinking',
+                'api.badgeBase': '基础',
+                'api.filterStats': '已在 /v1/models 暴露 {exposed} / {total} 个模型',
+                'api.saveSuccess': 'API模型设置已更新！',
                 'quota.connectionFailed': '连接失败',
                 'quota.connectionUnable': '无法连接到 {base}',
                 'quota.retry': '重试',
@@ -1271,6 +1434,202 @@
                 'quota.codexAuthFailed': 'Codex 认证失败',
                 'quota.usageCleared': '用量数据已清除',
                 'quota.resetUsageFailed': '重置用量失败',
+            },
+            it: {
+                'nav.quota': 'Quota',
+                'nav.usage': 'Utilizzo',
+                'nav.remote': 'Remoto',
+                'nav.routing': 'Routing',
+                'nav.beta': '(Beta)',
+                'nav.api': 'API',
+                'nav.logs': 'Log',
+                'nav.settings': 'Impostazioni',
+                'common.add': 'Aggiungi',
+                'common.refresh': 'Aggiorna',
+                'common.reload': 'Ricarica',
+                'common.pause': 'Pausa',
+                'common.resume': 'Riprendi',
+                'common.clear': 'Pulisci',
+                'common.save': 'Salva',
+                'common.reset': 'Ripristina',
+                'common.loading': 'Caricamento...',
+                'common.connecting': 'Connessione...',
+                'common.accountCount': '{count} account',
+                'common.copy': 'Copia',
+                'common.yes': 'Sì',
+                'common.no': 'No',
+                'toast.copied': 'Copiato!',
+                'diagnostics.button': 'Diagnostica',
+                'diagnostics.title': 'Diagnostica Account',
+                'diagnostics.subtitle': 'Controlla file locali, comandi e configurazioni usati dall\'importazione degli account.',
+                'diagnostics.idle': 'Esegui la diagnostica per ispezionare la configurazione dell\'account.',
+                'diagnostics.run': 'Esegui',
+                'diagnostics.running': 'Esecuzione diagnostica...',
+                'diagnostics.done': 'Diagnostica completata: {pass} superati, {warn} avvisi, {fail} errori.',
+                'diagnostics.failed': 'Diagnostica fallita: {message}',
+                'diagnostics.command': 'Comando',
+                'diagnostics.output': 'Output',
+                'diagnostics.noOutput': 'Nessun output',
+                'quota.title': 'Quota',
+                'quota.logIdeOut': 'Disconnetti IDE',
+                'quota.detailsUnavailable': 'Dettagli quota non disponibili',
+                'quota.tapToPing': 'Tocca per verificare l\'account',
+                'usage.title': 'Statistiche di Utilizzo',
+                'usage.subtitle': 'Consumo token e costo stimato',
+                'usage.daily': 'Utilizzo Giornaliero',
+                'usage.todayCost': 'Costo Oggi',
+                'usage.totalCost': 'Costo Totale',
+                'usage.tokens': 'token',
+                'usage.in': 'Input',
+                'usage.out': 'Output',
+                'usage.pricingNote': 'Basato sui prezzi delle API pubbliche',
+                'usage.modelDistribution': 'Distribuzione Modelli',
+                'usage.noData': 'Nessun dato di utilizzo',
+                'usage.loading': 'Caricamento...',
+                'usage.refreshed': 'Utilizzo aggiornato',
+                'usage.loadFailed': 'Impossibile caricare l\'utilizzo',
+                'logs.title': 'Log',
+                'logs.subtitle': 'Output in tempo reale del server (solo righe recenti)',
+                'logs.follow': 'Segui',
+                'logs.disabledLine': 'La cattura dei log è disattivata. Abilitala nelle Impostazioni.',
+                'settings.title': 'Impostazioni',
+                'settings.subtitle': 'Configura il comportamento dell\'applicazione',
+                'settings.language': 'Lingua',
+                'settings.languageDesc': 'Cambia la lingua della dashboard',
+                'settings.preloadRouting': 'Precarica Routing',
+                'settings.preloadRoutingDesc': 'Carica la tab Routing in background per un passaggio immediato',
+                'settings.autoNgrok': 'Avvio Automatico ngrok',
+                'settings.autoNgrokDesc': 'Avvia automaticamente il tunnel ngrok all\'avvio del server',
+                'settings.autoOpen': 'Apertura Automatica Dashboard',
+                'settings.autoOpenDesc': 'Apri il browser sulla Dashboard all\'avvio del server',
+                'settings.autoRefresh': 'Aggiornamento Automatico Quota',
+                'settings.autoRefreshDesc': 'Aggiorna automaticamente quota e utilizzo ogni 10 minuti',
+                'settings.privacy': 'Protezione Privacy',
+                'settings.privacyDesc': 'Nascondi email e nomi utente',
+                'settings.compact': 'Layout Compatto',
+                'settings.compactDesc': 'Riduci le schede Antigravity a 2 barre',
+                'settings.trackUsage': 'Traccia Utilizzo Token',
+                'settings.trackUsageDesc': 'Stima i costi in base al consumo di token',
+                'settings.captureLogs': 'Cattura Log',
+                'settings.captureLogsDesc': 'Memorizza i log recenti per la dashboard',
+                'settings.optimizeSort': 'Ottimizza Ordinamento Quota',
+                'settings.optimizeSortDesc': 'Ordina le schede per quota residua all\'interno di ciascun provider',
+                'settings.autoRestart': 'Riavvio Automatico (Watchdog)',
+                'settings.autoRestartDesc': 'Riavvia automaticamente il server dopo un crash',
+                'settings.enableAll': 'Abilita Tutti',
+                'settings.disableAll': 'Disabilita Tutti',
+                'settings.saveNote': 'Le impostazioni vengono salvate in ~/.anti-api/settings.json. Clicca Salva per applicare.',
+                'settings.saved': 'Impostazioni salvate!',
+                'settings.saveFailed': 'Impossibile salvare le impostazioni',
+                'settings.defaults': 'Ripristina predefiniti',
+                'settings.allEnabled': 'Tutte le impostazioni abilitate',
+                'settings.allDisabled': 'Tutte le impostazioni disabilitate',
+                'settings.updateTitle': 'Aggiornamenti',
+                'settings.updateDesc': 'Verifica le release GitHub e aggiorna sul posto.',
+                'settings.updateIdle': 'Nessun controllo aggiornamenti eseguito.',
+                'settings.checkUpdate': 'Controlla',
+                'settings.applyUpdate': 'Aggiorna',
+                'settings.updateChecking': 'Controllo aggiornamenti...',
+                'settings.updateApplying': 'Aggiornamento in corso. Il servizio si riavvierà al termine...',
+                'settings.updateCurrent': 'Già aggiornato all\'ultima versione: {current}.',
+                'settings.updateAvailable': 'Aggiornamento disponibile: {current} -> {latest}.',
+                'settings.updateBlocked': '{message} {hint}',
+                'settings.updateRestarting': 'Aggiornamento applicato. Riavvio in corso...',
+                'settings.updateFailed': 'Aggiornamento fallito: {message}',
+                'settings.ideLogoutTitle': 'Disconnetti IDE',
+                'settings.ideLogoutChecking': 'Controllo stato IDE...',
+                'settings.ideLogoutBody': 'Questa operazione eseguirà le seguenti azioni:',
+                'settings.ideLogoutQuit': 'Chiudi l\'IDE Antigravity in esecuzione (terminazione pulita via SIGTERM)',
+                'settings.ideLogoutClear': 'Cancella la sessione di accesso dal database locale dell\'IDE',
+                'settings.ideLogoutWarning': 'Attenzione: L\'IDE verrà chiuso. Salva il tuo lavoro prima di procedere. Gli account Anti-API non saranno interessati.',
+                'settings.ideLogoutCancel': 'Annulla',
+                'settings.ideLogoutConfirm': 'Conferma Disconnessione',
+                'settings.ideLogoutClosing': 'Chiusura IDE...',
+                'settings.ideLogoutDone': 'Fatto',
+                'settings.ideLogoutLoggedOut': 'IDE disconnesso',
+                'settings.ideLogoutFailed': 'Disconnessione fallita',
+                'settings.ideLogoutNetwork': 'Errore di rete',
+                'status.connected': 'Connesso',
+                'status.disconnected': 'Disconnesso',
+                'status.disabled': 'Disabilitato',
+                'status.paused': 'In pausa',
+                'status.refreshing': 'Aggiornamento...',
+                'status.refreshed': 'Aggiornato',
+                'status.failed': 'Fallito: {message}',
+                'api.title': 'API & Modelli',
+                'api.subtitle': 'Gestisci i modelli esposti, i filtri di visibilità e gli endpoint OpenAI',
+                'api.baseUrl': 'URL di Base',
+                'api.modelsUrl': 'Endpoint Modelli',
+                'api.chatUrl': 'Endpoint Chat',
+                'api.filterPolicies': 'Filtri di Visibilità',
+                'api.filterPoliciesDesc': 'Configura quali modelli vengono mostrati su /v1/models',
+                'api.latestOnly': 'Solo Modelli più Recenti per Famiglia',
+                'api.latestOnlyDesc': 'Espone solo il modello di punta attuale per ogni famiglia (3.8 Flash, 3.1 Pro, Sonnet 4.6), nascondendo le vecchie generazioni (2.5/3.6/3.7)',
+                'api.activeProvidersOnly': 'Solo Provider Attivi',
+                'api.activeProvidersOnlyDesc': 'Nasconde automaticamente i provider senza account autenticati (Copilot, Codex, Kiro, Grok)',
+                'api.separateThinking': 'Modelli Thinking Separati',
+                'api.separateThinkingDesc': 'Espone suffissi espliciti (-high, -medium, -low, -thinking) come modelli a parte, invece di usare solo lo standard OpenAI reasoning_effort',
+                'api.catalogTitle': 'Catalogo Modelli in Tempo Reale',
+                'api.catalogDesc': 'Panoramica in tempo reale dei modelli disponibili e dello stato di esposizione',
+                'api.searchPlaceholder': 'Cerca modelli...',
+                'api.statusExposed': 'Esposto',
+                'api.statusHidden': 'Nascosto',
+                'api.badgeLatest': 'Recente',
+                'api.badgeLegacy': 'Legacy',
+                'api.badgeThinking': 'Thinking',
+                'api.badgeBase': 'Base',
+                'api.filterStats': '{exposed} di {total} modelli esposti su /v1/models',
+                'api.saveSuccess': 'Impostazioni modelli API salvate con successo!',
+                'quota.connectionFailed': 'Connessione fallita',
+                'quota.connectionUnable': 'Impossibile connettersi a {base}',
+                'quota.retry': 'Riprova',
+                'quota.refreshing': 'Aggiornamento...',
+                'quota.refreshed': 'Aggiornato',
+                'quota.none': 'Nessun account presente',
+                'quota.addToView': 'Aggiungi account per visualizzare le schede della quota',
+                'quota.unavailable': 'Non disponibile',
+                'quota.copiedModel': 'Copiato: {model}',
+                'quota.removedAccount': 'Rimosso: {name}',
+                'quota.failedWithError': 'Fallito: {message}',
+                'quota.errorWithMessage': 'Errore: {message}',
+                'quota.removeConfirm': 'Rimuovere l\'account "{name}"?',
+                'quota.removeAccountLabel': 'Rimuovi account',
+                'quota.latency': 'Latenza {value}s',
+                'quota.copyTunnel': 'Copiato: {value}',
+                'quota.copyFailed': 'Copia fallita: {value}',
+                'quota.unknownError': 'Errore sconosciuto',
+                'quota.connecting': 'Connessione...',
+                'common.updated': 'Aggiornato',
+                'quota.ideStatusLoggedIn': 'IDE connesso: {email}',
+                'quota.ideStatusNotLoggedIn': 'IDE non connesso',
+                'quota.ideStatusUnable': 'Impossibile verificare lo stato dell\'IDE',
+                'quota.ideLogoutClosingNote': 'Apri manualmente Antigravity per accedere con un altro account.',
+                'quota.ideLogoutAuthCleared': 'Autenticazione cancellata',
+                'quota.ideLogoutWas': ' (era: {email})',
+                'quota.ideLoggedOut': 'IDE disconnesso',
+                'quota.addAccountTitle': 'Aggiungi Account',
+                'quota.capQuota': 'Monitoraggio quota',
+                'quota.capProxy': 'Compatibilità di protocollo',
+                'quota.capMultiAccount': 'Account autorizzati',
+                'quota.openBrowserCode': 'Apri il browser e inserisci questo codice:',
+                'quota.openVerificationPage': 'Apri pagina di verifica',
+                'quota.ideLogoutWarningTitle': 'Attenzione:',
+                'quota.ideLogoutWarningBody': 'L\'IDE verrà chiuso. Salva il tuo lavoro prima di procedere. Gli account Anti-API non saranno interessati.',
+                'quota.importedCopilot': 'Importato Copilot: {name}',
+                'quota.importedCodexMany': 'Importati {count} account Codex',
+                'quota.importedCodexOne': 'Importato Codex: {name}',
+                'quota.importedKiroMany': 'Importati {count} account Kiro',
+                'quota.connected': 'Connesso: {name}',
+                'quota.authFailed': 'Autenticazione fallita',
+                'quota.authError': 'Errore di autenticazione: {message}',
+                'quota.codexResuming': 'Ripresa autenticazione Codex...',
+                'quota.authStarting': 'Avvio autenticazione...',
+                'quota.waitingCopilot': 'In attesa dell\'autorizzazione GitHub Copilot...',
+                'quota.waitingCodex': 'In attesa dell\'autorizzazione Codex CLI...',
+                'quota.copilotAuthFailed': 'Autenticazione Copilot fallita',
+                'quota.codexAuthFailed': 'Autenticazione Codex CLI fallita',
+                'quota.usageCleared': 'Dati di utilizzo azzerati',
+                'quota.resetUsageFailed': 'Impossibile azzerare i dati di utilizzo',
             }
         };
 
@@ -1926,6 +2285,10 @@
                 stopLogStream();
             }
 
+            if (tabName === 'api') {
+                loadApiTabContent();
+            }
+
             if (tabName === 'settings' && !updateChecked) {
                 checkUpdates(false);
             }
@@ -1937,6 +2300,166 @@
                 iframe.src = '/remote-panel';
             }
             remoteLoaded = true;
+        }
+
+        let apiCatalogData = null;
+
+        async function loadApiTabContent() {
+            const origin = window.location.origin;
+            const baseCode = document.getElementById('api-base-url-code');
+            const modelsCode = document.getElementById('api-models-url-code');
+            const chatCode = document.getElementById('api-chat-url-code');
+            if (baseCode) baseCode.textContent = `${origin}/v1`;
+            if (modelsCode) modelsCode.textContent = `${origin}/v1/models`;
+            if (chatCode) chatCode.textContent = `${origin}/v1/chat/completions`;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/models-catalog`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                apiCatalogData = await res.json();
+                renderApiTabContent();
+            } catch (e) {
+                console.error('Failed to load api models catalog:', e);
+            }
+        }
+
+        function renderApiTabContent() {
+            if (!apiCatalogData) return;
+            const { allAvailable, exposedIds, settings } = apiCatalogData;
+
+            const latestInput = document.getElementById('api-filter-latest-only');
+            if (latestInput) latestInput.checked = settings.latestModelsOnly !== false;
+
+            const activeInput = document.getElementById('api-filter-active-providers');
+            if (activeInput) activeInput.checked = settings.onlyActiveProviders !== false;
+
+            const thinkingInput = document.getElementById('api-filter-separate-thinking');
+            if (thinkingInput) thinkingInput.checked = !!settings.separateThinkingModels;
+
+            const badge = document.getElementById('api-exposed-count-badge');
+            if (badge) badge.textContent = `${exposedIds.length} ${t('api.statusExposed').toLowerCase()}`;
+
+            const statsText = document.getElementById('api-stats-text');
+            if (statsText) {
+                statsText.textContent = (t('api.filterStats') || '{exposed} of {total} models exposed on /v1/models')
+                    .replace('{exposed}', exposedIds.length)
+                    .replace('{total}', allAvailable.length);
+            }
+
+            renderApiModelsList();
+        }
+
+        function filterApiModelsList() {
+            renderApiModelsList();
+        }
+
+        function renderApiModelsList() {
+            const container = document.getElementById('api-models-container');
+            if (!container || !apiCatalogData) return;
+
+            const { allAvailable, exposedIds, settings } = apiCatalogData;
+            const disabledSet = new Set(settings.disabledModels || []);
+            const exposedSet = new Set(exposedIds || []);
+            const searchTerm = (document.getElementById('api-model-search')?.value || '').toLowerCase().trim();
+
+            container.innerHTML = '';
+
+            const filtered = allAvailable.filter(m => {
+                if (!searchTerm) return true;
+                return m.id.toLowerCase().includes(searchTerm) || m.name.toLowerCase().includes(searchTerm) || m.owned_by.toLowerCase().includes(searchTerm);
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="text-xs text-gray-500 p-6 text-center">Nessun modello trovato.</div>`;
+                return;
+            }
+
+            filtered.forEach(m => {
+                const isExposed = exposedSet.has(m.id);
+                const isDisabledByUser = disabledSet.has(m.id);
+
+                const card = document.createElement('div');
+                card.className = `p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                    isExposed
+                        ? 'bg-gray-900/40 border-gray-800 hover:border-gray-700'
+                        : 'bg-black/20 border-gray-900 opacity-60 hover:opacity-80'
+                }`;
+
+                let catBadge = '';
+                if (m.isLegacy) {
+                    catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">${t('api.badgeLegacy')}</span>`;
+                } else if (m.isThinking) {
+                    catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">${t('api.badgeThinking')}</span>`;
+                } else {
+                    catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium">${t('api.badgeLatest')}</span>`;
+                }
+
+                const provBadge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 font-mono">${m.owned_by}</span>`;
+
+                const statusBadge = isExposed
+                    ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>${t('api.statusExposed')}</span>`
+                    : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-500 border border-gray-700/50 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>${t('api.statusHidden')}</span>`;
+
+                card.innerHTML = `
+                    <div class="flex items-center gap-3 min-w-0">
+                        <input type="checkbox" ${!isDisabledByUser ? 'checked' : ''} onchange="toggleApiModelEnabled('${m.id}', this.checked)"
+                            class="rounded border-gray-700 text-cyan-500 focus:ring-0 focus:ring-offset-0 bg-black/50 cursor-pointer"
+                            title="${!isDisabledByUser ? 'Disabilita questo modello' : 'Abilita questo modello'}">
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-mono text-xs font-semibold text-gray-200 cursor-pointer hover:text-cyan-400 transition-colors" onclick="copyToClipboard('${m.id}')" title="Clicca per copiare ID">${m.id}</span>
+                                ${provBadge}
+                                ${catBadge}
+                            </div>
+                            <div class="text-[11px] text-gray-500 truncate mt-0.5">${m.name}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 flex-shrink-0">
+                        ${statusBadge}
+                        <button onclick="copyToClipboard('${m.id}')" class="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-gray-200 transition-colors" title="Copia ID modello">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function handleApiFilterChange(key, value) {
+            try {
+                const res = await fetch(`${API_BASE}/settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ [key]: value })
+                });
+                if (!res.ok) throw new Error('Save failed');
+                showToast(t('api.saveSuccess'));
+                await loadApiTabContent();
+            } catch (e) {
+                showToast(t('settings.saveFailed'));
+            }
+        }
+
+        async function toggleApiModelEnabled(modelId, enabled) {
+            if (!apiCatalogData?.settings) return;
+            const current = new Set(apiCatalogData.settings.disabledModels || []);
+            if (!enabled) {
+                current.add(modelId);
+            } else {
+                current.delete(modelId);
+            }
+            const disabledModels = Array.from(current);
+            try {
+                const res = await fetch(`${API_BASE}/settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ disabledModels })
+                });
+                if (!res.ok) throw new Error('Save failed');
+                await loadApiTabContent();
+            } catch (e) {
+                showToast(t('settings.saveFailed'));
+            }
         }
 
         function loadRoutingContent() {

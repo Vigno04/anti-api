@@ -14,11 +14,11 @@ import { remoteRouter } from "./routes/remote/route"
 import { routingRouter } from "./routes/routing/route"
 import { logsRouter } from "./routes/logs/route"
 import { updatesRouter } from "./routes/updates/route"
-import { AVAILABLE_MODELS } from "./lib/config"
+import { AVAILABLE_MODELS, getAvailableModels } from "./lib/config"
 import { getAggregatedQuota } from "./services/quota-aggregator"
 import { initAuth, isAuthenticated } from "./services/antigravity/login"
 import { accountManager } from "./services/antigravity/account-manager"
-import { loadRoutingConfig } from "./services/routing/config"
+import { loadRoutingConfig, isSeparateThinkingModelsEnabled } from "./services/routing/config"
 import { getProviderModels } from "./services/routing/models"
 import { importCodexAuthSources } from "./services/codex/oauth"
 import { importGrokAuthSources } from "./services/grok/oauth"
@@ -46,6 +46,7 @@ import {
 } from "./lib/public-access"
 import { isLoopbackRequest } from "./lib/local-request"
 import { resolveLogLevel } from "./lib/log-level"
+import { dispatchOAuthCallback } from "./services/antigravity/oauth"
 
 export const server = new Hono()
 const PROVIDERS: AuthProvider[] = ["antigravity", "codex", "copilot", "zed", "kiro", "grok"]
@@ -59,6 +60,53 @@ interface ModelListEntry {
 initLogCapture()
 setLogCaptureEnabled(loadSettings().captureLogs)
 consola.level = resolveLogLevel()
+
+// CORS 中间件 - 支持跨域和反向代理
+server.use("*", async (c, next) => {
+    if (c.req.method === "OPTIONS") {
+        return new Response(null, {
+            status: 204,
+            headers: {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age": "86400",
+            },
+        })
+    }
+    await next()
+    c.res.headers.set("Access-Control-Allow-Origin", "*")
+    c.res.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
+    c.res.headers.set("Access-Control-Allow-Headers", "*")
+})
+
+// OAuth 回调端点 - 允许通过主端口/反向代理直接接收 OAuth 回调，无需额外暴露回调端口
+server.get("/oauth-callback", async (c) => {
+    const code = c.req.query("code")
+    const state = c.req.query("state")
+    const error = c.req.query("error")
+
+    const handled = dispatchOAuthCallback(code, state, error)
+    if (handled) {
+        return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Success</title></head>
+        <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+          <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+            <h2 style="color:#22c55e;margin-top:0;">✅ Authentication Success</h2>
+            <p>Your OAuth account has been connected to Anti-API.</p>
+            <p style="font-size:0.875rem;color:#a1a1aa;">Redirecting to dashboard in 2 seconds...</p>
+            <script>setTimeout(() => { window.location.href = '/quota'; }, 2000);</script>
+          </div>
+        </body></html>`)
+    }
+    return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Callback</title></head>
+    <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+      <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
+        <h2 style="color:#eab308;margin-top:0;">Callback Received</h2>
+        <p>No active login waiting or session already completed.</p>
+        <a href="/quota" style="color:#38bdf8;text-decoration:none;">Go to Dashboard</a>
+      </div>
+    </body></html>`)
+})
 
 // 中间件 - 请求日志 (只记录重要请求)
 server.use(async (c, next) => {
@@ -93,12 +141,20 @@ server.use(async (c, next) => {
         // All successful requests are silent (detailed 200 logs are handled elsewhere)
     })
 })
+
 server.use(async (c, next) => {
+    // Exempt public health checks and OAuth callback
+    if (c.req.path === "/oauth-callback" || c.req.path === "/health") {
+        return await next()
+    }
+
     if (isContainerControlPlaneEnabled()) {
         const expectedToken = getControlPlaneToken()
         const bootstrapToken = extractControlPlaneBootstrapToken(c.req.raw)
         if (expectedToken && bootstrapToken && tokenMatches(expectedToken, bootstrapToken)) {
-            c.header("Set-Cookie", `${CONTROL_PLANE_COOKIE}=${encodeURIComponent(expectedToken)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`)
+            const isHttps = c.req.header("x-forwarded-proto") === "https" || c.req.url.startsWith("https://")
+            const secureFlag = isHttps ? "; Secure" : ""
+            c.header("Set-Cookie", `${CONTROL_PLANE_COOKIE}=${encodeURIComponent(expectedToken)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax${secureFlag}`)
             const cleanUrl = new URL(c.req.url)
             cleanUrl.searchParams.delete("control_token")
             return c.redirect(`${cleanUrl.pathname}${cleanUrl.search}`, 303)
@@ -106,6 +162,8 @@ server.use(async (c, next) => {
         if (!expectedToken || !tokenMatches(expectedToken, extractControlPlaneToken(c.req.raw))) {
             return c.json({ success: false, error: "A valid container control-plane token is required." }, expectedToken ? 401 : 503)
         }
+    } else if (process.env.ANTI_API_BEHIND_REVERSE_PROXY === "1" || process.env.ANTI_API_TRUST_PROXY === "1") {
+        // Reverse proxy mode: allow external host header
     } else if (!isLoopbackRequest(c.req.raw)) {
         return c.json({ success: false, error: "The local control plane is only available through a loopback host and origin." }, 403)
     }
@@ -216,33 +274,94 @@ server.route("/v1beta/messages", messageRoutes)
 // 无前缀版本 for GUI tools
 server.route("/messages", messageRoutes)
 
-// 模型列表处理函数 - 兼容 OpenAI 和 Anthropic 格式
-const modelsHandler = (c: any) => {
-    const now = new Date().toISOString()
+const LEGACY_ANTIGRAVITY_IDS = new Set([
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-thinking",
+    "gemini-3-flash",
+    "gemini-3-flash-agent",
+    "gemini-3-pro",
+    "gemini-3-pro-high",
+    "gemini-3-pro-low",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-image",
+    "gemini-3.5-flash-low",
+    "gemini-3.5-flash-extra-low",
+    "gemini-3.6-flash-high",
+    "gemini-3.6-flash-medium",
+    "gemini-3.6-flash-low",
+    "gemini-3.6-flash-tiered",
+    "gemini-3.7-flash-high",
+    "gemini-3.7-flash-medium",
+    "gemini-3.7-flash-low",
+    "gemini-3.7-flash-tiered",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-5-thinking",
+    "claude-opus-4-5-thinking",
+])
+
+function computeModelsCatalog() {
+    const settings = loadSettings()
     const routingConfig = loadRoutingConfig()
+
     const routeModels: ModelListEntry[] = (routingConfig.flows || []).map(flow => ({
         id: flow.name,
         name: `Route: ${flow.name}`,
         owned_by: "routing",
     }))
-    const providerModels: ModelListEntry[] = PROVIDERS.flatMap((provider) =>
-        getProviderModels(provider).map(model => ({
+
+    const activeProviderSet = new Set(
+        PROVIDERS.filter(p => authStore.listAccounts(p).length > 0)
+    )
+
+    const targetProviders = (settings.onlyActiveProviders ?? true)
+        ? PROVIDERS.filter(p => activeProviderSet.has(p))
+        : PROVIDERS
+
+    const separateThinking = settings.separateThinkingModels ?? isSeparateThinkingModelsEnabled()
+
+    const providerModels: ModelListEntry[] = targetProviders.flatMap((provider) =>
+        getProviderModels(provider, { includeAllVariants: separateThinking }).map(model => ({
             id: model.id,
             name: model.label,
             owned_by: provider,
         }))
     )
+
+    const baseModels: ModelListEntry[] = (activeProviderSet.has("antigravity") || !settings.onlyActiveProviders)
+        ? getAvailableModels({ separateThinking }).map(model => ({
+            id: model.id,
+            name: model.name,
+            owned_by: "antigravity",
+        }))
+        : []
+
     const seen = new Set<string>()
-    const baseModels: ModelListEntry[] = AVAILABLE_MODELS.map(model => ({
-        id: model.id,
-        name: model.name,
-        owned_by: "antigravity",
-    }))
-    const models = [...baseModels, ...providerModels, ...routeModels].filter(model => {
+    let models = [...baseModels, ...providerModels, ...routeModels].filter(model => {
         if (seen.has(model.id)) return false
         seen.add(model.id)
         return true
     })
+
+    // Filter: latestModelsOnly (keep flagship per family, drop legacy)
+    if (settings.latestModelsOnly ?? true) {
+        models = models.filter(m => !(m.owned_by === "antigravity" && LEGACY_ANTIGRAVITY_IDS.has(m.id)))
+    }
+
+    // Filter: disabledModels
+    if (Array.isArray(settings.disabledModels) && settings.disabledModels.length > 0) {
+        const disabledSet = new Set(settings.disabledModels)
+        models = models.filter(m => !disabledSet.has(m.id))
+    }
+
+    return { models, settings, activeProviders: Array.from(activeProviderSet) }
+}
+
+// 模型列表处理函数 - 兼容 OpenAI 和 Anthropic 格式
+const modelsHandler = (c: any) => {
+    const now = new Date().toISOString()
+    const { models } = computeModelsCatalog()
 
     return c.json({
         object: "list",
@@ -265,6 +384,63 @@ const modelsHandler = (c: any) => {
 server.get("/v1/models", modelsHandler)
 server.get("/v1beta/models", modelsHandler)
 server.get("/models", modelsHandler)  // 无前缀版本 for GUI tools
+
+// API 仪表盘模型目录与实时状态
+server.get("/api/models-catalog", (c: any) => {
+    const routingConfig = loadRoutingConfig()
+    const settings = loadSettings()
+    const separateThinking = settings.separateThinkingModels ?? isSeparateThinkingModelsEnabled()
+
+    const activeProviderSet = new Set(
+        PROVIDERS.filter(p => authStore.listAccounts(p).length > 0)
+    )
+
+    // All available models without filters
+    const allBase: ModelListEntry[] = getAvailableModels({ separateThinking: true }).map(model => ({
+        id: model.id,
+        name: model.name,
+        owned_by: "antigravity",
+    }))
+    const allProviders: ModelListEntry[] = PROVIDERS.flatMap(provider =>
+        getProviderModels(provider, { includeAllVariants: true }).map(model => ({
+            id: model.id,
+            name: model.label,
+            owned_by: provider,
+        }))
+    )
+    const allRoutes: ModelListEntry[] = (routingConfig.flows || []).map(flow => ({
+        id: flow.name,
+        name: `Route: ${flow.name}`,
+        owned_by: "routing",
+    }))
+
+    const seenAll = new Set<string>()
+    const allAvailable = [...allBase, ...allProviders, ...allRoutes].filter(m => {
+        if (seenAll.has(m.id)) return false
+        seenAll.add(m.id)
+        return true
+    }).map(m => {
+        const isLegacy = m.owned_by === "antigravity" && LEGACY_ANTIGRAVITY_IDS.has(m.id)
+        const isThinking = m.id.endsWith("-high") || m.id.endsWith("-low") || m.id.endsWith("-medium") || m.id.endsWith("-thinking")
+        const isProviderActive = m.owned_by === "routing" || activeProviderSet.has(m.owned_by as AuthProvider)
+        return {
+            ...m,
+            isLegacy,
+            isThinking,
+            isProviderActive,
+        }
+    })
+
+    const { models: exposedModels } = computeModelsCatalog()
+    const exposedIds = new Set(exposedModels.map(m => m.id))
+
+    return c.json({
+        allAvailable,
+        exposedIds: Array.from(exposedIds),
+        settings,
+        activeProviders: Array.from(activeProviderSet),
+    })
+})
 
 // 配额面板 - HTML Dashboard
 server.get("/quota", async (c) => {

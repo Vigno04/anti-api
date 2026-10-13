@@ -65,8 +65,21 @@ export function normalizeOfficialModelId(model: string): string {
         "claude-sonnet-4.5-thinking": "claude-sonnet-4-5-thinking",
         "claude-opus-4.5-thinking": "claude-opus-4-5-thinking",
         "claude-opus-4.6-thinking": "claude-opus-4-6-thinking",
+        "claude-sonnet-4-6": "claude-sonnet-4-6",
+        "claude-sonnet-4.6": "claude-sonnet-4-6",
+        "gemini-3.8-flash": "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high": "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low": "gemini-3.8-flash-low",
+        "gemini-3.5-flash-lite": "gemini-3.5-flash-lite",
+        "gemini-3.1-pro": "gemini-3.1-pro-high",
+        "gemini-3.1-pro-preview": "gemini-3.1-pro-high",
+        "gemini-3-pro": "gemini-3-pro-high",
+        "gemini-2.5-pro": "gemini-2.5-pro",
+        "gemini-2.5-flash": "gemini-2.5-flash",
     }
     return map[lookupKey] || normalized
+
 }
 
 /**
@@ -158,7 +171,8 @@ function advanceAccountCursor(state: AccountStickyState | null, entriesLength: n
 function buildOfficialModelIndex(): Map<string, Set<AuthProvider>> {
     const index = new Map<string, Set<AuthProvider>>()
     for (const provider of PROVIDER_ORDER) {
-        const models = getProviderModels(provider)
+        const models = getProviderModels(provider, { includeAllVariants: true })
+
         for (const model of models) {
             const key = officialModelKey(model.id)
             if (!index.has(key)) {
