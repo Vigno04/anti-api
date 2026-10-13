@@ -450,9 +450,10 @@ You are pair programming with a USER to solve their coding task. The task may re
     }
 }
 
-function buildFunctionCallingConfig(toolChoice?: ChatRequest["toolChoice"]): any {
+function buildFunctionCallingConfig(toolChoice?: ChatRequest["toolChoice"], isClaude = false): any {
+    const defaultMode = isClaude ? "VALIDATED" : "AUTO"
     if (!toolChoice) {
-        return { mode: "VALIDATED" }
+        return { mode: defaultMode }
     }
 
     switch (toolChoice.type) {
@@ -467,9 +468,10 @@ function buildFunctionCallingConfig(toolChoice?: ChatRequest["toolChoice"]): any
             }
         case "auto":
         default:
-            return { mode: "VALIDATED" }
+            return { mode: defaultMode }
     }
 }
+
 
 function isGemini31Model(model: string): boolean {
     return /^gemini-3\./i.test(model) || model === "gemini-pro-agent" || /^gemini-3-/i.test(model)
@@ -521,11 +523,9 @@ export async function claudeToAntigravity(
     // causes INVALID_ARGUMENT on current Antigravity endpoints.
     if (!isGemini31Model(model)) innerRequest.safetySettings = buildSafetySettings()
 
-    if (model.includes("claude")) {
-        innerRequest.toolConfig = { functionCallingConfig: buildFunctionCallingConfig(toolChoice) }
-    }
-
-    if (tools && tools.length > 0 && model.includes("claude")) {
+    const isClaude = model.includes("claude")
+    if (tools && tools.length > 0) {
+        innerRequest.toolConfig = { functionCallingConfig: buildFunctionCallingConfig(toolChoice, isClaude) }
         innerRequest.tools = tools.map(tool => ({
             functionDeclarations: [{
                 name: tool.name,
@@ -533,7 +533,10 @@ export async function claudeToAntigravity(
                 parameters: normalizeToolParameters(tool.input_schema)
             }]
         }))
+    } else if (isClaude) {
+        innerRequest.toolConfig = { functionCallingConfig: buildFunctionCallingConfig(toolChoice, true) }
     }
+
 
     return {
         model,

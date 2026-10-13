@@ -974,6 +974,19 @@
                 </div>
             </div>
 
+            <!-- Drag & Drop JSON Import Area -->
+            <div id="drop-account-zone"
+                class="mt-4 p-4 border-2 border-dashed border-[#2f253f] hover:border-purple-400 rounded-xl bg-purple-950/15 hover:bg-purple-950/30 transition-all text-center cursor-pointer flex flex-col items-center justify-center gap-1 group">
+                <div class="flex items-center gap-2 text-purple-300 font-semibold text-xs group-hover:text-purple-200">
+                    <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <span>Trascina qui il file JSON credenziali o clicca per caricarlo</span>
+                </div>
+                <div class="text-[11px] text-gray-400">Importa direttamente il file senza bisogno di SSH (supporta antigravity-account.json, auth.json, accounts.json)</div>
+                <input type="file" id="account-file-input" class="hidden" accept=".json,application/json">
+            </div>
+
             <div id="add-account-status" class="mt-4 text-xs text-gray-400 hidden"></div>
             <div id="codex-device" class="mt-4 hidden">
                 <div class="text-sm text-gray-400 mb-2" data-i18n="quota.openBrowserCode">Open the browser and enter this code:</div>
@@ -3392,12 +3405,90 @@
             }
         }
 
+        // Gestione Drag & Drop per importazione file credenziali JSON
+        function initAccountDropZone() {
+            const dropZone = document.getElementById('drop-account-zone');
+            const fileInput = document.getElementById('account-file-input');
+            if (!dropZone || !fileInput) return;
+
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    handleAccountFileImport(e.target.files[0]);
+                }
+            });
+
+            ['dragenter', 'dragover'].forEach(name => {
+                dropZone.addEventListener(name, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.add('border-purple-400', 'bg-purple-950/40');
+                });
+            });
+
+            ['dragleave', 'drop'].forEach(name => {
+                dropZone.addEventListener(name, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('border-purple-400', 'bg-purple-950/40');
+                });
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                if (dt && dt.files && dt.files[0]) {
+                    handleAccountFileImport(dt.files[0]);
+                }
+            });
+
+            // Supporta drag & drop globale sulla pagina per file .json
+            window.addEventListener('dragover', (e) => e.preventDefault());
+            window.addEventListener('drop', (e) => {
+                if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    const file = e.dataTransfer.files[0];
+                    if (file.name.endsWith('.json')) {
+                        e.preventDefault();
+                        openAddAccountModal();
+                        handleAccountFileImport(file);
+                    }
+                }
+            });
+        }
+
+        async function handleAccountFileImport(file) {
+            setAddAccountStatus('Importazione credenziali in corso...');
+            try {
+                const text = await file.text();
+                const json = JSON.parse(text);
+
+                const response = await fetch(`${API_BASE}/auth/import`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(json)
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    closeAddAccountModal();
+                    showToast(`✓ Account ${data.email || ''} importato con successo!`);
+                    await checkAuthStatus();
+                    refreshAll(true);
+                } else {
+                    setAddAccountStatus(data.error || 'Errore durante l\'importazione del file.');
+                }
+            } catch (err) {
+                setAddAccountStatus('File non valido o JSON corrotto: ' + err.message);
+            }
+        }
+
         // Initial load
         refreshAll(false);
         init3DEffect();
         initSettings();
         fetchIdeStatus();
         resumeCodexSession();
+        initAccountDropZone();
 
         // 🆕 Auto-refresh when returning from OAuth window
         // Attach click handlers to Add buttons to track login

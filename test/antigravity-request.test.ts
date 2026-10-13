@@ -35,3 +35,73 @@ test("Antigravity request builder emits inline data for image blocks", async () 
         { inlineData: { mimeType: "image/png", data: "AQID" } },
     ])
 })
+
+test("Gemini models attach tools and use AUTO function calling mode", async () => {
+    const tools = [{
+        name: "terminal",
+        description: "Run shell command",
+        input_schema: {
+            type: "object",
+            properties: { command: { type: "string" } },
+            required: ["command"]
+        }
+    }]
+
+    const request = await claudeToAntigravity(
+        "gemini-3.8-flash-medium",
+        [{ role: "user", content: "update servers" }],
+        tools
+    )
+
+    expect(request.request.tools).toBeDefined()
+    expect(request.request.tools.length).toBe(1)
+    expect(request.request.tools[0].functionDeclarations[0].name).toBe("terminal")
+    expect(request.request.toolConfig).toEqual({ functionCallingConfig: { mode: "AUTO" } })
+})
+
+test("Gemini models with specific tool choice use ANY mode with allowed function names", async () => {
+    const tools = [{
+        name: "terminal",
+        description: "Run shell command",
+        input_schema: { type: "object", properties: {} }
+    }]
+
+    const request = await claudeToAntigravity(
+        "gemini-3.8-flash-medium",
+        [{ role: "user", content: "run command" }],
+        tools,
+        { type: "tool", name: "terminal" }
+    )
+
+    expect(request.request.toolConfig).toEqual({
+        functionCallingConfig: { mode: "ANY", allowedFunctionNames: ["terminal"] }
+    })
+})
+
+test("Claude models attach tools and use VALIDATED function calling mode", async () => {
+    const tools = [{
+        name: "search",
+        description: "Search web",
+        input_schema: { type: "object", properties: {} }
+    }]
+
+    const request = await claudeToAntigravity(
+        "claude-sonnet-4-5",
+        [{ role: "user", content: "search web" }],
+        tools
+    )
+
+    expect(request.request.tools).toBeDefined()
+    expect(request.request.tools[0].functionDeclarations[0].name).toBe("search")
+    expect(request.request.toolConfig).toEqual({ functionCallingConfig: { mode: "VALIDATED" } })
+})
+
+test("Gemini models without tools omit toolConfig", async () => {
+    const request = await claudeToAntigravity(
+        "gemini-3.8-flash-medium",
+        [{ role: "user", content: "hello" }]
+    )
+
+    expect(request.request.tools).toBeUndefined()
+    expect(request.request.toolConfig).toBeUndefined()
+})

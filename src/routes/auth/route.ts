@@ -47,10 +47,58 @@ authRouter.get("/export", (c) => {
     return c.json({ success: false, error: "Credential bundle export/import has been removed." }, 410)
 })
 
-// Credential export/import has been removed.
-authRouter.post("/import", (c) => {
-    return c.json({ success: false, error: "Credential bundle export/import has been removed." }, 410)
+// Import credenziali da file JSON (trascinato da Web UI)
+authRouter.post("/import", async (c) => {
+    try {
+        const payload = await c.req.json()
+        const accountsToImport = Array.isArray(payload)
+            ? payload
+            : (Array.isArray(payload.accounts) ? payload.accounts : [payload])
+
+        accountManager.load()
+        let importedCount = 0
+        let lastEmail = ""
+
+        for (const item of accountsToImport) {
+            const accessToken = item.accessToken || item.access_token || item.apiKey
+            const refreshToken = item.refreshToken || item.refresh_token || ""
+            const email = item.userEmail || item.email || item.login || item.id || "unknown"
+            const name = item.userName || item.name || email.split("@")[0]
+            const projectId = item.projectId || item.cloudaicompanionProject || "aicode-consumers"
+            const expiresAt = item.expiresAt || item.expires_at || (Date.now() + 3600 * 1000)
+
+            if (!accessToken && !refreshToken) continue
+
+            accountManager.addAccount({
+                id: email || `account-${Date.now()}`,
+                email,
+                accessToken: accessToken || "",
+                refreshToken: refreshToken || "",
+                expiresAt,
+                projectId,
+            })
+            if (!state.accessToken && accessToken) {
+                setAuth(accessToken, refreshToken, email, name)
+            }
+            lastEmail = email
+            importedCount++
+        }
+
+        if (importedCount === 0) {
+            return c.json({ success: false, error: "Nessuna credenziale valida trovata nel file JSON." }, 400)
+        }
+
+        return c.json({
+            success: true,
+            imported: importedCount,
+            email: lastEmail,
+            message: `Importato con successo ${importedCount} account.`
+        })
+    } catch (e) {
+        return c.json({ success: false, error: (e as Error).message || "Errore nella lettura del JSON" }, 400)
+    }
 })
+
 
 // 登录（触发 OAuth 或设置 token）
 authRouter.post("/login", async (c) => {
@@ -237,22 +285,26 @@ authRouter.post("/login", async (c) => {
             }
         }
 
-        setAuth(body.accessToken, body.refreshToken, body.email, body.name)
+        const email = body.email || (body as any).userEmail
+        const name = body.name || (body as any).userName
+        const projectId = body.projectId || (body as any).cloudaicompanionProject || state.cloudaicompanionProject
+
+        setAuth(body.accessToken, body.refreshToken, email, name)
         accountManager.load()
         accountManager.addAccount({
-            id: body.email || `account-${Date.now()}`,
-            email: body.email || "unknown",
+            id: email || `account-${Date.now()}`,
+            email: email || "unknown",
             accessToken: body.accessToken,
             refreshToken: body.refreshToken || "",
             expiresAt: state.tokenExpiresAt || 0,
-            projectId: state.cloudaicompanionProject,
+            projectId,
         })
         return c.json({
             success: true,
             authenticated: true,
             provider: "antigravity",
-            email: body.email,
-            name: body.name,
+            email: email,
+            name: name,
         })
     } catch {
         return c.json({ error: "Authentication request failed. Check provider setup and retry." }, 500)
