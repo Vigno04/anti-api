@@ -1330,15 +1330,15 @@
 
             if (!accountData || !accountData.bars) return null;
 
-            let barKey = null;
-            if (MODEL_GROUPS.claudeGpt.includes(modelId)) barKey = 'claude_gpt';
-            else if (MODEL_GROUPS.gpro.includes(modelId)) barKey = 'gpro';
-            else if (MODEL_GROUPS.gflash.includes(modelId)) barKey = 'gflash';
+            if (MODEL_GROUPS.claudeGpt.includes(modelId) || modelId.includes('claude') || modelId.includes('gpt-oss')) {
+                const cBars = accountData.bars.filter(b => b.key.startsWith('claude_gpt'));
+                if (cBars.length > 0) return Math.min(...cBars.map(b => b.percentage));
+            } else if (modelId.includes('gemini') || MODEL_GROUPS.gpro.includes(modelId) || MODEL_GROUPS.gflash.includes(modelId)) {
+                const gBars = accountData.bars.filter(b => b.key.startsWith('gemini'));
+                if (gBars.length > 0) return Math.min(...gBars.map(b => b.percentage));
+            }
 
-            if (!barKey) return null;
-
-            const bar = accountData.bars.find(b => b.key === barKey);
-            return bar ? bar.percentage : null;
+            return null;
         }
 
         function renderAccounts() {

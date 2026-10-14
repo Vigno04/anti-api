@@ -3218,23 +3218,16 @@
             let bars = account.bars || [];
             const cardId = `${provider}-${account.accountId}`;
 
-            // Compact layout: for Antigravity, show only 2 bars (claude_gpt + lower of gpro/gflash)
-            if (window._compactLayout && provider === 'antigravity' && bars.length >= 3) {
-                const claudeGpt = bars.find(b => b.key === 'claude_gpt');
-                const gpro = bars.find(b => b.key === 'gpro');
-                const gflash = bars.find(b => b.key === 'gflash');
-
-                // Pick the Gemini bar with lower percentage
-                let geminiBar = null;
-                if (gpro && gflash) {
-                    geminiBar = gpro.percentage <= gflash.percentage ? gpro : gflash;
-                    geminiBar = { ...geminiBar, label: 'gemini' }; // Unified label
-                } else {
-                    geminiBar = gpro || gflash;
-                    if (geminiBar) geminiBar = { ...geminiBar, label: 'gemini' };
-                }
-
-                bars = [claudeGpt, geminiBar].filter(Boolean);
+            // Compact layout: for Antigravity, show only 2 bars (lowest of gemini + lowest of claude_gpt)
+            if (window._compactLayout && provider === 'antigravity' && bars.length >= 2) {
+                const geminiBars = bars.filter(b => b.key.startsWith('gemini'));
+                const claudeBars = bars.filter(b => b.key.startsWith('claude_gpt'));
+                const minBar = (arr, label) => {
+                    if (arr.length === 0) return null;
+                    const lowest = arr.reduce((min, b) => (b.percentage || 0) < (min.percentage || 0) ? b : min, arr[0]);
+                    return { ...lowest, label };
+                };
+                bars = [minBar(geminiBars, 'gemini'), minBar(claudeBars, 'claude&gpt')].filter(Boolean);
             }
 
             const barHtml = bars.map(bar => {
@@ -3309,7 +3302,10 @@
             for (const provider of providerOrder) {
                 const group = accounts.filter(acc => acc.provider === provider);
                 const metricInfo = (acc) => {
-                    if (provider === 'antigravity') return getQuotaBarInfo(acc, 'claude_gpt', 'claude&gpt');
+                    if (provider === 'antigravity') {
+                        const info = getQuotaBarInfo(acc, 'claude_gpt_week', 'weekly claude gpt');
+                        return (info && (info.percent !== 0 || info.resetTime)) ? info : getQuotaBarInfo(acc, 'gemini_5h', '5hr gemini');
+                    }
                     if (provider === 'codex') return getQuotaBarInfo(acc, 'session', '5h');
                     if (provider === 'copilot') return getQuotaBarInfo(acc, 'premium', 'premium');
                     if (provider === 'zed') return getQuotaBarInfo(acc, 'hosted', 'hosted');

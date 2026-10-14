@@ -366,7 +366,7 @@ function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
         "gpt-oss-120b",
         "gpt-oss-120b-medium",
     ]
-    const gproIds = [
+    const geminiIds = [
         "gemini-pro-agent",
         "gemini-3.1-pro-high",
         "gemini-3.1-pro-low",
@@ -374,8 +374,6 @@ function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
         "gemini-pro",
         "gemini-3-pro-high",
         "gemini-3-pro-low",
-    ]
-    const gflashIds = [
         "gemini-3.8-flash-high",
         "gemini-3.8-flash-medium",
         "gemini-3.8-flash-low",
@@ -398,10 +396,43 @@ function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
         "gemini-flash",
     ]
 
+    const geminiRaw = buildMergedBar("gemini", "gemini", models, geminiIds)
+    const claudeGptRaw = buildMergedBar("claude_gpt", "claude_gpt", models, claudeGptIds)
+
+    const now = Date.now()
+    const isGeminiWeekly = geminiRaw.resetTime ? (Date.parse(geminiRaw.resetTime) - now > 12 * 3600 * 1000) : false
+    const isClaudeWeekly = claudeGptRaw.resetTime ? (Date.parse(claudeGptRaw.resetTime) - now > 12 * 3600 * 1000) : true
+
+    const geminiWeekly: AccountBar = {
+        key: "gemini_week",
+        label: "weekly gemini",
+        percentage: isGeminiWeekly ? geminiRaw.percentage : 100,
+        resetTime: isGeminiWeekly ? geminiRaw.resetTime : undefined,
+    }
+    const gemini5h: AccountBar = {
+        key: "gemini_5h",
+        label: "5hr gemini",
+        percentage: isGeminiWeekly ? 0 : geminiRaw.percentage,
+        resetTime: isGeminiWeekly ? undefined : geminiRaw.resetTime,
+    }
+    const claudeGptWeekly: AccountBar = {
+        key: "claude_gpt_week",
+        label: "weekly claude gpt",
+        percentage: isClaudeWeekly ? claudeGptRaw.percentage : 100,
+        resetTime: isClaudeWeekly ? claudeGptRaw.resetTime : undefined,
+    }
+    const claudeGpt5h: AccountBar = {
+        key: "claude_gpt_5h",
+        label: "5hr claude gpt",
+        percentage: !isClaudeWeekly ? claudeGptRaw.percentage : (claudeGptRaw.percentage <= 0 ? 0 : 100),
+        resetTime: !isClaudeWeekly ? claudeGptRaw.resetTime : undefined,
+    }
+
     return [
-        buildMergedBar("claude_gpt", "claude&gpt", models, claudeGptIds),
-        buildMergedBar("gpro", "gpro", models, gproIds),
-        buildMergedBar("gflash", "gflash", models, gflashIds),
+        geminiWeekly,
+        gemini5h,
+        claudeGptWeekly,
+        claudeGpt5h,
     ]
 }
 

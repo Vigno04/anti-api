@@ -393,22 +393,20 @@ server.get("/api/models-catalog", async (c: any) => {
     const antigravityExhaustedModels = new Set<string>()
     const antigravityAccounts = (quotaSnapshot?.accounts || []).filter(a => a.provider === "antigravity")
     if (antigravityAccounts.length > 0) {
-        const hasAvailableForBar = (barKey: string) => {
+        const hasAvailableForBarPrefix = (prefix: string) => {
             return antigravityAccounts.some(acc => {
-                const bar = (acc.bars || []).find(b => b.key === barKey)
-                return bar ? bar.percentage > 0 : true
+                const bars = (acc.bars || []).filter(b => b.key.startsWith(prefix))
+                return bars.length === 0 || bars.every(b => b.percentage > 0)
             })
         }
-        if (!hasAvailableForBar("claude_gpt")) {
+        if (!hasAvailableForBarPrefix("claude_gpt")) {
             antigravityExhaustedModels.add("claude-opus-5-5")
             antigravityExhaustedModels.add("claude-sonnet-5-5")
             antigravityExhaustedModels.add("gpt-oss-120b")
         }
-        if (!hasAvailableForBar("gpro")) {
+        if (!hasAvailableForBarPrefix("gemini")) {
             antigravityExhaustedModels.add("gemini-3.1-pro")
             antigravityExhaustedModels.add("gemini-pro")
-        }
-        if (!hasAvailableForBar("gflash")) {
             antigravityExhaustedModels.add("gemini-3.8-flash")
             antigravityExhaustedModels.add("gemini-3.5-flash-lite")
             antigravityExhaustedModels.add("gemini-flash")
