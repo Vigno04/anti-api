@@ -348,10 +348,15 @@ async function fetchAntigravityModelsForAccount(
 
 function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
     const claudeGptIds = [
+        "claude-opus-5-5",
+        "claude-opus-5-5-thinking",
+        "claude-sonnet-5-5",
+        "claude-sonnet-5-5-thinking",
+        "claude-opus-4-6-thinking",
+        "claude-sonnet-4-6",
+        "claude-opus-4-5-thinking",
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-thinking",
-        "claude-opus-4-5-thinking",
-        "claude-opus-4-6-thinking",
         "gpt-oss-120b",
     ]
     const gproIds = [

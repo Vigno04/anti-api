@@ -53,21 +53,27 @@ export function mapModel(openaiModel: string, reasoningEffort?: "low" | "medium"
             ? "gemini-2.5-flash-thinking"
             : "gemini-2.5-flash"
     }
+    if (norm === "claude-opus-5-5" || norm === "claude-opus-5.5") {
+        return "claude-opus-5-5-thinking"
+    }
+    if (norm === "claude-sonnet-5-5" || norm === "claude-sonnet-5.5") {
+        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
+            ? "claude-sonnet-5-5-thinking"
+            : "claude-sonnet-5-5"
+    }
+    if (norm === "claude-opus-4-6" || norm === "claude-opus-4.6") {
+        return "claude-opus-4-6-thinking"
+    }
     if (norm === "claude-sonnet-4-6" || norm === "claude-sonnet-4.6") {
         return "claude-sonnet-4-6"
     }
-    if (norm === "claude-sonnet-4-5") {
+    if (norm === "claude-opus-4-5" || norm === "claude-opus-4.5") {
+        return "claude-opus-4-5-thinking"
+    }
+    if (norm === "claude-sonnet-4-5" || norm === "claude-sonnet-4.5") {
         return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
             ? "claude-sonnet-4-5-thinking"
             : "claude-sonnet-4-5"
-    }
-    if (norm === "claude-opus-4-6") {
-        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
-            ? "claude-opus-4-6-thinking"
-            : "claude-opus-4-6-thinking"
-    }
-    if (norm === "claude-opus-4-5" || norm === "claude-opus-5-5") {
-        return "claude-opus-4-5-thinking"
     }
 
     return raw
