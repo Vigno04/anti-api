@@ -3,7 +3,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 import { authStore } from "~/services/auth/store"
 import { refreshAccessToken } from "~/services/antigravity/oauth"
-import { fetchAntigravityModels as fetchAntigravityModelsRequest, type AntigravityModelInfo } from "~/services/antigravity/quota-fetch"
+import {
+    fetchAntigravityModels as fetchAntigravityModelsRequest,
+    fetchAntigravityQuotaSummary,
+    type AntigravityModelInfo,
+    type AntigravityQuotaSummaryResponse,
+    type AntigravityQuotaBucket,
+    type AntigravityQuotaGroup,
+} from "~/services/antigravity/quota-fetch"
 import { refreshCodexAccessToken, refreshCodexAccountIfNeeded } from "~/services/codex/oauth"
 import { accountManager } from "~/services/antigravity/account-manager"
 import type { ProviderAccount } from "~/services/auth/types"
@@ -19,6 +26,7 @@ type AccountBar = {
     label: string
     percentage: number
     resetTime?: string
+    disabled?: boolean
 }
 
 type QuotaProvider = "antigravity" | "codex" | "copilot" | "zed" | "kiro"
@@ -222,8 +230,9 @@ async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<Acco
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
                 const refreshed = await refreshAntigravityToken(account)
-                const quotaModels = await fetchAntigravityModelsForAccount(refreshed)
-                const bars = buildAntigravityBars(quotaModels)
+                const quotaModels = await fetchAntigravityModelsForAccount(refreshed).catch(() => ({}))
+                const quotaSummary = await fetchAntigravityQuotaSummaryForAccount(refreshed)
+                const bars = buildAntigravityBars(quotaModels, quotaSummary)
                 const displayName = account.label || account.email || account.id
                 updateQuotaCache({
                     provider: "antigravity",
@@ -346,7 +355,93 @@ async function fetchAntigravityModelsForAccount(
     }
 }
 
-function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
+async function fetchAntigravityQuotaSummaryForAccount(
+    account: ProviderAccount,
+    hasRefreshed = false
+): Promise<AntigravityQuotaSummaryResponse | null> {
+    try {
+        return await fetchAntigravityQuotaSummary(account.accessToken, account.projectId, account.proxy)
+    } catch (error) {
+        if (error instanceof UpstreamError && error.status === 401 && account.refreshToken && !hasRefreshed) {
+            try {
+                const refreshed = await refreshAccessToken(account.refreshToken, account.proxy)
+                account.accessToken = refreshed.accessToken
+                account.expiresAt = Date.now() + refreshed.expiresIn * 1000
+                authStore.saveAccount(account)
+                return fetchAntigravityQuotaSummaryForAccount(account, true)
+            } catch (refreshError) {
+                if (isCertificateError(refreshError) || isAuthError(refreshError)) {
+                    return null
+                }
+                throw refreshError
+            }
+        }
+
+        if (error instanceof UpstreamError && error.status === 401) {
+            return null
+        }
+
+        return null
+    }
+}
+
+export function buildAntigravityBars(
+    models: Record<string, ModelInfo>,
+    summary?: AntigravityQuotaSummaryResponse | null
+): AccountBar[] {
+    if (summary?.groups && summary.groups.length > 0) {
+        const groups = summary.groups
+
+        const geminiGroup = groups.find(g => {
+            const name = (g.displayName || "").toLowerCase()
+            return name.includes("gemini")
+        }) || groups.find(g => (g.buckets || []).some(b => b.bucketId.toLowerCase().includes("gemini")))
+
+        const claudeGroup = groups.find(g => {
+            const name = (g.displayName || "").toLowerCase()
+            return name.includes("claude") || name.includes("gpt") || name.includes("3p")
+        }) || groups.find(g => (g.buckets || []).some(b => {
+            const id = b.bucketId.toLowerCase()
+            return id.includes("3p") || id.includes("claude") || id.includes("gpt")
+        }))
+
+        const getBucket = (group: AntigravityQuotaGroup | undefined, isWeekly: boolean) => {
+            if (!group?.buckets) return undefined
+            return group.buckets.find(b => {
+                const w = (b.window || "").toLowerCase()
+                const id = b.bucketId.toLowerCase()
+                return isWeekly ? (w === "weekly" || id.includes("week")) : (w === "5h" || id.includes("5h"))
+            })
+        }
+
+        const gWeekly = getBucket(geminiGroup, true)
+        const g5h = getBucket(geminiGroup, false)
+        const cWeekly = getBucket(claudeGroup, true)
+        const c5h = getBucket(claudeGroup, false)
+
+        const toBar = (key: string, label: string, bucket?: AntigravityQuotaBucket, defaultPct = 100): AccountBar => {
+            if (!bucket) {
+                return { key, label, percentage: defaultPct }
+            }
+            const fraction = typeof bucket.remainingFraction === "number" ? bucket.remainingFraction : (defaultPct / 100)
+            const percentage = Math.max(0, Math.min(100, Math.round(fraction * 100)))
+            return {
+                key,
+                label,
+                percentage,
+                resetTime: bucket.resetTime || undefined,
+                ...(bucket.disabled !== undefined ? { disabled: bucket.disabled } : {}),
+            }
+        }
+
+        return [
+            toBar("gemini_week", "weekly gemini", gWeekly, 100),
+            toBar("gemini_5h", "5hr gemini", g5h, 100),
+            toBar("claude_gpt_week", "weekly claude gpt", cWeekly, 0),
+            toBar("claude_gpt_5h", "5hr claude gpt", c5h, 0),
+        ]
+    }
+
     const claudeGptIds = [
         "claude-opus-5-5",
         "claude-opus-5-5-high",

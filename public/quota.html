@@ -2852,6 +2852,12 @@
             const hours = Math.floor(diffMs / (1000 * 60 * 60));
             const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
 
+            if (hours >= 24) {
+                const days = Math.floor(hours / 24);
+                const remHours = hours % 24;
+                return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+            }
+
             if (hours > 0) return `${hours}h ${minutes}m`;
             return `${minutes}m`;
         }

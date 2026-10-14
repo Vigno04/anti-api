@@ -392,19 +392,23 @@ server.get("/api/models-catalog", async (c: any) => {
     const quotaSnapshot = await getAggregatedQuota().catch(() => null)
     const antigravityExhaustedModels = new Set<string>()
     const antigravityAccounts = (quotaSnapshot?.accounts || []).filter(a => a.provider === "antigravity")
+    let hasClaudeAvailable = true
+    let hasGeminiAvailable = true
     if (antigravityAccounts.length > 0) {
         const hasAvailableForBarPrefix = (prefix: string) => {
             return antigravityAccounts.some(acc => {
                 const bars = (acc.bars || []).filter(b => b.key.startsWith(prefix))
-                return bars.length === 0 || bars.every(b => b.percentage > 0)
+                return bars.length === 0 || bars.every(b => (b.percentage ?? 0) > 0 && !b.disabled)
             })
         }
-        if (!hasAvailableForBarPrefix("claude_gpt")) {
+        hasClaudeAvailable = hasAvailableForBarPrefix("claude_gpt")
+        hasGeminiAvailable = hasAvailableForBarPrefix("gemini")
+        if (!hasClaudeAvailable) {
             antigravityExhaustedModels.add("claude-opus-5-5")
             antigravityExhaustedModels.add("claude-sonnet-5-5")
             antigravityExhaustedModels.add("gpt-oss-120b")
         }
-        if (!hasAvailableForBarPrefix("gemini")) {
+        if (!hasGeminiAvailable) {
             antigravityExhaustedModels.add("gemini-3.1-pro")
             antigravityExhaustedModels.add("gemini-pro")
             antigravityExhaustedModels.add("gemini-3.8-flash")
@@ -420,7 +424,11 @@ server.get("/api/models-catalog", async (c: any) => {
         return true
     }).map(m => {
         const isProviderActive = m.owned_by === "routing" || activeProviderSet.has(m.owned_by as AuthProvider)
-        const isQuotaExhausted = m.owned_by === "antigravity" && antigravityExhaustedModels.has(m.id)
+        const isQuotaExhausted = m.owned_by === "antigravity" && (
+            antigravityExhaustedModels.has(m.id) ||
+            (!hasClaudeAvailable && (m.id.includes("claude") || m.id.includes("gpt-oss"))) ||
+            (!hasGeminiAvailable && m.id.includes("gemini"))
+        )
         const isAvailable = isProviderActive && !isQuotaExhausted
         const isLegacy = m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)
         const isThinking = m.id.endsWith("-high") || m.id.endsWith("-low") || m.id.endsWith("-medium") || m.id.endsWith("-thinking")

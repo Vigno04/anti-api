@@ -9,6 +9,53 @@ export type AntigravityModelInfo = {
     resetTime?: string
 }
 
+export type AntigravityQuotaBucket = {
+    bucketId: string
+    displayName?: string
+    window?: "weekly" | "5h" | string
+    resetTime?: string
+    description?: string
+    remainingFraction?: number
+    disabled?: boolean
+}
+
+export type AntigravityQuotaGroup = {
+    displayName?: string
+    description?: string
+    buckets?: AntigravityQuotaBucket[]
+}
+
+export type AntigravityQuotaSummaryResponse = {
+    groups?: AntigravityQuotaGroup[]
+    description?: string
+}
+
+export async function fetchAntigravityQuotaSummary(
+    accessToken: string,
+    projectId?: string | null,
+    proxy?: string
+): Promise<AntigravityQuotaSummaryResponse> {
+    const resolvedProjectId = projectId || await getProjectID(accessToken, proxy) || generateMockProjectId()
+    const project = resolvedProjectId
+
+    const response = await fetchJson(`${CLOUD_CODE_BASE_URL}/v1internal:retrieveUserQuotaSummary`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+            "User-Agent": getAntigravityUserAgent(),
+        },
+        body: JSON.stringify({ project }),
+        proxy,
+    })
+
+    if (response.status < 200 || response.status >= 300) {
+        throw new UpstreamError("antigravity", response.status, response.text)
+    }
+
+    return response.data as AntigravityQuotaSummaryResponse
+}
+
 export async function fetchAntigravityModels(
     accessToken: string,
     projectId?: string | null,
