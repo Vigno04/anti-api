@@ -155,6 +155,8 @@ export async function handleCompletion(c: Context): Promise<Response> {
             usage: {
                 input_tokens: result.usage?.inputTokens || 0,
                 output_tokens: result.usage?.outputTokens || 0,
+                cache_read_input_tokens: result.usage?.cacheReadTokens || 0,
+                cache_creation_input_tokens: 0,
             },
         }
 

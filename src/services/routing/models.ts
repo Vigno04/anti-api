@@ -1,4 +1,5 @@
 import { AVAILABLE_MODELS, getAvailableModels } from "~/lib/config"
+import { getAntigravityCatalog, setDiscoveredAntigravityModelIds } from "~/lib/model-catalog"
 import { isSeparateThinkingModelsEnabled } from "./config"
 import type { AuthProvider } from "~/services/auth/types"
 
@@ -165,14 +166,45 @@ function isInternalAntigravityModel(id: string): boolean {
            lower.includes("extra-low")
 }
 
+/** Feeds every discovered Antigravity model ID to the catalog, which picks the latest per family. */
+function syncAntigravityCatalog(): void {
+    const discovered = mergeModelOptions(
+        flattenDynamicModelsByAccount(dynamicAntigravityModelsByAccount),
+        dynamicAntigravityModels
+    )
+    setDiscoveredAntigravityModelIds(discovered.map(m => m.id))
+}
+
+function getCatalogAntigravityModels(separateThinking: boolean): ProviderModelOption[] {
+    const catalog = getAntigravityCatalog()
+    const models = separateThinking ? [...catalog.base, ...catalog.variants] : catalog.base
+    return models.map(m => ({ id: m.id, label: m.name }))
+}
+
+/** Every known Antigravity model (latest + legacy + discovered), for dashboards. */
+export function getAllAntigravityModels(): ProviderModelOption[] {
+    const staticModels = getAvailableModels({ separateThinking: true }).map(model => ({
+        id: model.id,
+        label: model.name,
+    }))
+    return mergeModelOptions(
+        getCatalogAntigravityModels(true),
+        flattenDynamicModelsByAccount(dynamicAntigravityModelsByAccount),
+        dynamicAntigravityModels,
+        staticModels
+    )
+}
+
 export function setDynamicAntigravityModels(models: ProviderModelOption[]): void {
     const filtered = (models || []).filter(m => !isInternalAntigravityModel(m.id))
     dynamicAntigravityModels = sanitizeModelOptions(filtered, "Antigravity")
+    syncAntigravityCatalog()
 }
 
 export function clearDynamicAntigravityModels(): void {
     dynamicAntigravityModels = []
     dynamicAntigravityModelsByAccount.clear()
+    syncAntigravityCatalog()
 }
 
 export function setDynamicAntigravityModelsForAccount(accountId: string, models: ProviderModelOption[]): void {
@@ -180,15 +212,18 @@ export function setDynamicAntigravityModelsForAccount(accountId: string, models:
     if (!id) return
     const filtered = (models || []).filter(m => !isInternalAntigravityModel(m.id))
     dynamicAntigravityModelsByAccount.set(id, sanitizeModelOptions(filtered, "Antigravity"))
+    syncAntigravityCatalog()
 }
 
 
 export function clearDynamicAntigravityModelsForAccount(accountId: string): void {
     dynamicAntigravityModelsByAccount.delete(accountId)
+    syncAntigravityCatalog()
 }
 
 export function clearAllDynamicAntigravityModelsByAccount(): void {
     dynamicAntigravityModelsByAccount.clear()
+    syncAntigravityCatalog()
 }
 
 export function setDynamicZedModels(models: ProviderModelOption[]): void {
@@ -260,21 +295,17 @@ export function clearAllDynamicGrokModelsByAccount(): void {
     dynamicGrokModelsByAccount.clear()
 }
 
-export function getProviderModels(provider: AuthProvider, options?: { includeAllVariants?: boolean }): ProviderModelOption[] {
+export function getProviderModels(
+    provider: AuthProvider,
+    options?: { includeAllVariants?: boolean; includeLegacy?: boolean }
+): ProviderModelOption[] {
     if (provider === "antigravity") {
-        const separateThinking = options?.includeAllVariants ? true : isSeparateThinkingModelsEnabled()
-        const staticModels = getAvailableModels({ separateThinking }).map(model => ({
-            id: model.id,
-            label: model.name,
-        }))
-        const dynamicMerged = mergeModelOptions(
-            flattenDynamicModelsByAccount(dynamicAntigravityModelsByAccount),
-            dynamicAntigravityModels
-        )
-        if (dynamicMerged.length === 0) {
-            return staticModels
+        if (options?.includeLegacy) {
+            const aliasModels = Array.from(getAntigravityCatalog().aliases.keys()).map(id => ({ id, label: id }))
+            return mergeModelOptions(getAllAntigravityModels(), aliasModels)
         }
-        return mergeModelOptions(dynamicMerged, staticModels)
+        const separateThinking = options?.includeAllVariants ? true : isSeparateThinkingModelsEnabled()
+        return getCatalogAntigravityModels(separateThinking)
     }
 
 
@@ -342,16 +373,7 @@ export function getProviderModelsForAccount(provider: AuthProvider, accountId: s
         return getProviderModels(provider)
     }
     if (provider === "antigravity") {
-        const separateThinking = isSeparateThinkingModelsEnabled()
-        const staticModels = getAvailableModels({ separateThinking }).map(model => ({ id: model.id, label: model.name }))
-        if (!separateThinking) {
-            return staticModels
-        }
-        const dynamic = dynamicAntigravityModelsByAccount.get(accountId)
-        if (dynamic && dynamic.length > 0) {
-            return mergeModelOptions(dynamic, staticModels)
-        }
-        return getProviderModels(provider)
+        return getCatalogAntigravityModels(isSeparateThinkingModelsEnabled())
     }
 
     if (provider === "zed") {

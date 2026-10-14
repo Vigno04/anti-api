@@ -7,6 +7,7 @@ export interface OpenAIChatCompletionRequest {
     messages: OpenAIMessage[]
     stream?: boolean
     max_tokens?: number
+    stream_options?: { include_usage?: boolean }
     temperature?: number
     top_p?: number
     tools?: OpenAITool[]
@@ -75,6 +76,7 @@ export interface OpenAIUsage {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
+    prompt_tokens_details?: { cached_tokens: number }
 }
 
 export interface OpenAIStreamChunk {

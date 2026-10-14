@@ -179,7 +179,7 @@ function advanceAccountCursor(state: AccountStickyState | null, entriesLength: n
 function buildOfficialModelIndex(): Map<string, Set<AuthProvider>> {
     const index = new Map<string, Set<AuthProvider>>()
     for (const provider of PROVIDER_ORDER) {
-        const models = getProviderModels(provider, { includeAllVariants: true })
+        const models = getProviderModels(provider, { includeAllVariants: true, includeLegacy: true })
 
         for (const model of models) {
             const key = officialModelKey(model.id)

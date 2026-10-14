@@ -16,6 +16,7 @@ import { getAntigravityUserAgent } from "~/lib/antigravity-client"
 import { fetchRemoteImageAsBase64 } from "~/lib/remote-image"
 import { createImageInputBudget, decodedBase64ImageBytes, type ImageInputBudget } from "~/lib/image-input"
 import { safeErrorMessage } from "~/lib/redaction"
+import { resolveAntigravityAlias } from "~/lib/model-catalog"
 
 accountManager.load()
 
@@ -212,7 +213,7 @@ const MODEL_MAPPING: Record<string, string> = {
 
 
 export function getAntigravityModelName(userModel: string): string {
-    return MODEL_MAPPING[userModel] || userModel
+    return MODEL_MAPPING[userModel] || resolveAntigravityAlias(userModel) || userModel
 }
 
 export interface ChatRequest {
@@ -239,7 +240,8 @@ export interface ContentBlock {
 export interface ChatResponse {
     contentBlocks: ContentBlock[]
     stopReason: string | null
-    usage?: { inputTokens: number; outputTokens: number }
+    // inputTokens = uncached input (Anthropic semantics); cacheReadTokens = tokens served from prompt cache
+    usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }
 }
 
 function generateStableSessionId(messages: ClaudeMessage[]): string {
@@ -268,6 +270,77 @@ export function computeSessionKey(messages: ClaudeMessage[]): string {
         }
     }
     return `ag_sess_${Date.now()}`
+}
+
+/**
+ * 🆕 Prompt Cache Estimator:
+ * Re-uses the existing computeSessionKey to track conversational prefixes.
+ * Google Cloud Code (Antigravity) uses Gemini/Claude infrastructure with:
+ *   - Minimum threshold: 1024 tokens
+ *   - Cache TTL: 5 minutes (300_000 ms)
+ * When upstream reports 0 cached tokens, we estimate the cached prefix if within TTL and >= 1024 tokens.
+ */
+interface CacheSessionRecord {
+    lastSeen: number
+    promptTokens: number
+    model: string
+}
+
+const CACHE_MIN_TOKENS = 1024
+const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes (TTL matching official Gemini/Anthropic caching)
+const CACHE_MAX_ENTRIES = 500 // Bound memory usage strictly
+
+const sessionCacheMap = new Map<string, CacheSessionRecord>()
+
+function cleanupExpiredCacheSessions(now: number = Date.now()): void {
+    for (const [key, record] of sessionCacheMap.entries()) {
+        if (now - record.lastSeen > CACHE_TTL_MS) {
+            sessionCacheMap.delete(key)
+        }
+    }
+}
+
+// Periodic cleanup every 2 minutes unref'd so it doesn't block process exit
+const cacheCleanupTimer = setInterval(() => {
+    cleanupExpiredCacheSessions()
+}, 2 * 60 * 1000)
+if (cacheCleanupTimer && typeof cacheCleanupTimer.unref === "function") {
+    cacheCleanupTimer.unref()
+}
+
+export function estimatePromptCache(sessionKey: string, promptTokens: number, model: string): number {
+    if (!sessionKey || promptTokens < CACHE_MIN_TOKENS) {
+        return 0
+    }
+
+    const now = Date.now()
+    cleanupExpiredCacheSessions(now)
+
+    const existing = sessionCacheMap.get(sessionKey)
+    let estimatedCached = 0
+
+    if (existing && existing.model === model && (now - existing.lastSeen) <= CACHE_TTL_MS) {
+        if (existing.promptTokens >= CACHE_MIN_TOKENS && promptTokens >= existing.promptTokens) {
+            // The previous turn's entire prompt was cached and forms the prefix of the current prompt
+            estimatedCached = existing.promptTokens
+        }
+    }
+
+    // Strict capacity enforcement (LRU eviction if at capacity)
+    if (sessionCacheMap.size >= CACHE_MAX_ENTRIES && !sessionCacheMap.has(sessionKey)) {
+        const oldestKey = sessionCacheMap.keys().next().value
+        if (oldestKey) sessionCacheMap.delete(oldestKey)
+    }
+
+    // Refresh record with current timestamp (re-insert for LRU order)
+    sessionCacheMap.delete(sessionKey)
+    sessionCacheMap.set(sessionKey, {
+        lastSeen: now,
+        promptTokens,
+        model,
+    })
+
+    return estimatedCached
 }
 
 function extractTextContent(content: any): string {
@@ -656,7 +729,7 @@ export async function claudeToAntigravity(
     }
 }
 
-function parseApiResponse(rawResponse: string): ChatResponse {
+function parseApiResponse(rawResponse: string, sessionKey?: string, model?: string): ChatResponse {
     let chunks: any[] = []
     const trimmed = rawResponse.trim()
     if (trimmed.startsWith("[")) chunks = JSON.parse(trimmed)
@@ -714,10 +787,19 @@ function parseApiResponse(rawResponse: string): ChatResponse {
     if (contentBlocks.length === 0) contentBlocks.push({ type: "text", text: "" })
 
     const usage = lastChunk.response.usageMetadata || lastChunk.usageMetadata
+    const promptTokens = usage?.promptTokenCount || 0
+    let cachedTokens = Math.min(usage?.cachedContentTokenCount || 0, promptTokens)
+    if (cachedTokens === 0 && sessionKey && model) {
+        cachedTokens = estimatePromptCache(sessionKey, promptTokens, model)
+    }
     return {
         contentBlocks,
         stopReason: hasToolUse ? "tool_use" : "end_turn",
-        usage: { inputTokens: usage?.promptTokenCount || 0, outputTokens: (usage?.candidatesTokenCount || 0) + (usage?.thoughtsTokenCount || 0) },
+        usage: {
+            inputTokens: promptTokens - cachedTokens,
+            outputTokens: (usage?.candidatesTokenCount || 0) + (usage?.thoughtsTokenCount || 0),
+            cacheReadTokens: cachedTokens,
+        },
     }
 }
 
@@ -1383,10 +1465,10 @@ export async function createChatCompletionWithOptions(
         const sseChunks = collectSseChunks(rawSse)
         const rawResponse = sseChunks.length > 0 ? JSON.stringify(sseChunks) : rawSse
 
-        const result = parseApiResponse(rawResponse)
+        const result = parseApiResponse(rawResponse, sessionKey, request.model)
 
         // Record usage (fire-and-forget) - use actual native model ID
-        const inputTokens = result.usage?.inputTokens || 0
+        const inputTokens = (result.usage?.inputTokens || 0) + (result.usage?.cacheReadTokens || 0)
         const outputTokens = result.usage?.outputTokens || 0
         const actualModelId = getAntigravityModelName(request.model)
         if (inputTokens > 0 || outputTokens > 0) {
@@ -1475,6 +1557,8 @@ export async function* createChatCompletionStreamWithOptions(
         let blockIndex = 0
         let hasToolUse = false
         let outputTokens = 0
+        let streamInputTokens = 0
+        let streamCacheReadTokens = 0
         let textBlockStarted = false
         let latestThoughtSignature: string | undefined
 
@@ -1568,7 +1652,16 @@ export async function* createChatCompletionStreamWithOptions(
         }
 
             const usage = responseData?.usageMetadata
-            if (usage) outputTokens = (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0)
+            if (usage) {
+                outputTokens = (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0)
+                const promptTokens = usage.promptTokenCount || 0
+                let cached = Math.min(usage.cachedContentTokenCount || 0, promptTokens)
+                if (cached === 0 && sessionKey && request.model) {
+                    cached = estimatePromptCache(sessionKey, promptTokens, request.model)
+                }
+                streamCacheReadTokens = cached
+                streamInputTokens = promptTokens - cached
+            }
         }
 
         // 关闭最后的文本块（如果有）
@@ -1580,18 +1673,18 @@ export async function* createChatCompletionStreamWithOptions(
         consola.warn(`Tool choice "${request.toolChoice.name || "unknown"}" requested but no tool_use returned`)
     }
     const stopReason = hasToolUse ? "tool_use" : "end_turn"
-        const messageDelta = { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: outputTokens } }
+        const messageDelta = { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: { input_tokens: streamInputTokens, cache_read_input_tokens: streamCacheReadTokens, output_tokens: outputTokens } }
         yield "event: message_delta\ndata: " + JSON.stringify(messageDelta) + "\n\n"
         yield "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 
         // Record usage (fire-and-forget) - use actual native model ID
         const actualModelId = getAntigravityModelName(request.model)
-        if (outputTokens > 0) {
+        if (outputTokens > 0 || streamInputTokens > 0) {
             if (accountId) {
-                accountManager.recordAccountUsage(accountId, outputTokens)
+                accountManager.recordAccountUsage(accountId, streamInputTokens + streamCacheReadTokens + outputTokens)
             }
             import("~/services/usage-tracker").then(({ recordUsage }) => {
-                recordUsage(actualModelId, 0, outputTokens)
+                recordUsage(actualModelId, streamInputTokens + streamCacheReadTokens, outputTokens)
             }).catch(() => { })
         }
     } finally {

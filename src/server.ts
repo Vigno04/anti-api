@@ -14,7 +14,7 @@ import { remoteRouter } from "./routes/remote/route"
 import { routingRouter } from "./routes/routing/route"
 import { logsRouter } from "./routes/logs/route"
 import { updatesRouter } from "./routes/updates/route"
-import { AVAILABLE_MODELS, getAvailableModels } from "./lib/config"
+import { isLatestAntigravityModel } from "./lib/model-catalog"
 import { getAggregatedQuota } from "./services/quota-aggregator"
 import { initAuth, isAuthenticated } from "./services/antigravity/login"
 import { accountManager } from "./services/antigravity/account-manager"
@@ -274,31 +274,8 @@ server.route("/v1beta/messages", messageRoutes)
 // 无前缀版本 for GUI tools
 server.route("/messages", messageRoutes)
 
-const LEGACY_ANTIGRAVITY_IDS = new Set([
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash-thinking",
-    "gemini-3-flash",
-    "gemini-3-flash-agent",
-    "gemini-3-pro",
-    "gemini-3-pro-high",
-    "gemini-3-pro-low",
-    "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-image",
-    "gemini-3.5-flash-low",
-    "gemini-3.5-flash-extra-low",
-    "gemini-3.6-flash-high",
-    "gemini-3.6-flash-medium",
-    "gemini-3.6-flash-low",
-    "gemini-3.6-flash-tiered",
-    "gemini-3.7-flash-high",
-    "gemini-3.7-flash-medium",
-    "gemini-3.7-flash-low",
-    "gemini-3.7-flash-tiered",
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-5-thinking",
-])
+// Legacy = any Antigravity model that is not the latest of its family (see lib/model-catalog.ts)
+const isLegacyAntigravityId = (id: string): boolean => !isLatestAntigravityModel(id)
 
 function computeModelsCatalog() {
     const settings = loadSettings()
@@ -329,9 +306,9 @@ function computeModelsCatalog() {
     )
 
     const baseModels: ModelListEntry[] = (activeProviderSet.has("antigravity") || !settings.onlyActiveProviders)
-        ? getAvailableModels({ separateThinking }).map(model => ({
+        ? getProviderModels("antigravity", { includeAllVariants: separateThinking, includeLegacy: !(settings.latestModelsOnly ?? true) }).map(model => ({
             id: model.id,
-            name: model.name,
+            name: model.label,
             owned_by: "antigravity",
         }))
         : []
@@ -345,7 +322,7 @@ function computeModelsCatalog() {
 
     // Filter: latestModelsOnly (keep flagship per family, drop legacy)
     if (settings.latestModelsOnly ?? true) {
-        models = models.filter(m => !(m.owned_by === "antigravity" && LEGACY_ANTIGRAVITY_IDS.has(m.id)))
+        models = models.filter(m => !(m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)))
     }
 
     // Filter: disabledModels
@@ -395,9 +372,9 @@ server.get("/api/models-catalog", (c: any) => {
     )
 
     // All available models without filters
-    const allBase: ModelListEntry[] = getAvailableModels({ separateThinking: true }).map(model => ({
+    const allBase: ModelListEntry[] = getProviderModels("antigravity", { includeLegacy: true }).map(model => ({
         id: model.id,
-        name: model.name,
+        name: model.label,
         owned_by: "antigravity",
     }))
     const allProviders: ModelListEntry[] = PROVIDERS.flatMap(provider =>
@@ -419,7 +396,7 @@ server.get("/api/models-catalog", (c: any) => {
         seenAll.add(m.id)
         return true
     }).map(m => {
-        const isLegacy = m.owned_by === "antigravity" && LEGACY_ANTIGRAVITY_IDS.has(m.id)
+        const isLegacy = m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)
         const isThinking = m.id.endsWith("-high") || m.id.endsWith("-low") || m.id.endsWith("-medium") || m.id.endsWith("-thinking")
         const isProviderActive = m.owned_by === "routing" || activeProviderSet.has(m.owned_by as AuthProvider)
         return {

@@ -128,7 +128,8 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
         }
 
         // Token counts for response (Usage recording is handled in chat.ts with actual native model ID)
-        const inputTokens = result.usage?.inputTokens || 0
+        const cacheReadTokens = result.usage?.cacheReadTokens || 0
+        const inputTokens = (result.usage?.inputTokens || 0) + cacheReadTokens
         const outputTokens = result.usage?.outputTokens || 0
 
         return c.json({
@@ -141,6 +142,7 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
                 prompt_tokens: inputTokens,
                 completion_tokens: outputTokens,
                 total_tokens: inputTokens + outputTokens,
+                prompt_tokens_details: { cached_tokens: cacheReadTokens },
             },
         })
     } catch (error) {
@@ -203,6 +205,7 @@ async function handleStreamCompletion(
             let accumulatedToolCalls: any[] = []
             let currentToolCall: any = null
             let streamInputTokens = 0
+            let streamCacheReadTokens = 0
             let streamOutputTokens = 0
 
             for await (const event of chatStream) {
@@ -237,6 +240,9 @@ async function handleStreamCompletion(
                                 // Capture input tokens from message_start
                                 if (parsed.message?.usage?.input_tokens) {
                                     streamInputTokens = parsed.message.usage.input_tokens
+                                }
+                                if (parsed.message?.usage?.cache_read_input_tokens) {
+                                    streamCacheReadTokens = parsed.message.usage.cache_read_input_tokens
                                 }
                                 break
 
@@ -281,6 +287,12 @@ async function handleStreamCompletion(
                                 if (parsed.usage?.output_tokens) {
                                     streamOutputTokens = parsed.usage.output_tokens
                                 }
+                                if (parsed.usage?.input_tokens) {
+                                    streamInputTokens = parsed.usage.input_tokens
+                                }
+                                if (parsed.usage?.cache_read_input_tokens) {
+                                    streamCacheReadTokens = parsed.usage.cache_read_input_tokens
+                                }
                                 if (accumulatedToolCalls.length > 0) {
                                     if (!await writeData(buildStreamChunk(chatId, payload.model, undefined, undefined, "tool_use", accumulatedToolCalls))) return
                                 }
@@ -292,6 +304,23 @@ async function handleStreamCompletion(
 
 
             // Note: Usage recording is handled in chat.ts with the actual native model ID
+
+            if (!cancelled && payload.stream_options?.include_usage) {
+                const promptTokens = streamInputTokens + streamCacheReadTokens
+                await writeData(JSON.stringify({
+                    id: chatId,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: payload.model,
+                    choices: [],
+                    usage: {
+                        prompt_tokens: promptTokens,
+                        completion_tokens: streamOutputTokens,
+                        total_tokens: promptTokens + streamOutputTokens,
+                        prompt_tokens_details: { cached_tokens: streamCacheReadTokens },
+                    },
+                }))
+            }
 
             if (!cancelled) {
                 await writeData("[DONE]")
