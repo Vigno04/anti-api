@@ -17,6 +17,7 @@ import { UpstreamError } from "~/lib/error"
 import { getDataDir } from "~/lib/data-dir"
 import { tightenPrivateFile, writePrivateFile } from "~/lib/private-file"
 import { safeErrorMessage } from "~/lib/redaction"
+import { isCacheAwareRoutingEnabled } from "~/services/settings"
 
 type RateLimitReason =
     | "quota_exhausted"
@@ -168,6 +169,9 @@ class AccountManager {
     private inFlightStartedAt = new Map<string, number>()
     private accountLocks = new Map<string, Promise<void>>()
     private lastCallByAccount = new Map<string, number>()
+    // 🆕 Cache-Aware Session Routing
+    private sessionAccountMap = new Map<string, { accountId: string; lastSeen: number }>()
+    private accountEstimatedTokens = new Map<string, number>()
 
     constructor() {
         this.dataFile = path.join(getDataDir(), "accounts.json")
@@ -476,6 +480,22 @@ class AccountManager {
     }
 
     /**
+     * 记录账号的 Token 消耗估算（用于负载均衡与 Cache-Aware 路由）
+     */
+    recordAccountUsage(accountId: string, tokens: number): void {
+        if (!accountId || !tokens || tokens <= 0) return
+        const current = this.accountEstimatedTokens.get(accountId) || 0
+        this.accountEstimatedTokens.set(accountId, current + tokens)
+    }
+
+    /**
+     * 获取账号的累计 Token 消耗估算
+     */
+    getAccountUsage(accountId: string): number {
+        return this.accountEstimatedTokens.get(accountId) || 0
+    }
+
+    /**
      * 获取所有账号邮箱
      */
     getEmails(): string[] {
@@ -628,12 +648,14 @@ class AccountManager {
     /**
      * 获取下一个可用账号
      * 🆕 粘性策略：使用队列顺序，队首优先
+     * 🆕 Cache-Aware 路由：如果开启且提供 sessionKey，同一对话优先使用原账号，新对话负载均衡
      */
-    async getNextAvailableAccount(forceRotate: boolean = false): Promise<{
+    async getNextAvailableAccount(forceRotate: boolean = false, sessionKey?: string): Promise<{
         accessToken: string
         projectId: string
         email: string
         accountId: string
+        proxy?: string
     } | null> {
         this.ensureLoaded()
         if (this.accounts.size === 0) {
@@ -647,6 +669,42 @@ class AccountManager {
             return null
         }
 
+        // 🆕 Cache-Aware 逻辑处理
+        if (isCacheAwareRoutingEnabled()) {
+            // 清理超过 2 小时的非活动 session
+            for (const [key, sess] of this.sessionAccountMap.entries()) {
+                if (now - sess.lastSeen > 2 * 3600 * 1000) {
+                    this.sessionAccountMap.delete(key)
+                }
+            }
+
+            if (sessionKey && !forceRotate && this.sessionAccountMap.has(sessionKey)) {
+                const sessionEntry = this.sessionAccountMap.get(sessionKey)!
+                const mappedAccount = this.accounts.get(sessionEntry.accountId)
+                if (mappedAccount && (!mappedAccount.rateLimitedUntil || mappedAccount.rateLimitedUntil <= now)) {
+                    sessionEntry.lastSeen = now
+                    if (mappedAccount.expiresAt > 0 && now > mappedAccount.expiresAt - 5 * 60 * 1000) {
+                        try {
+                            const tokens = await refreshAccessToken(mappedAccount.refreshToken, mappedAccount.proxy)
+                            mappedAccount.accessToken = tokens.accessToken
+                            mappedAccount.expiresAt = now + tokens.expiresIn * 1000
+                            this.save()
+                        } catch (e) {
+                            consola.warn(`Failed to refresh token for ${mappedAccount.email}:`, safeErrorMessage(e))
+                        }
+                    }
+                    this.lastUsedAccount = { accountId: mappedAccount.id, timestamp: now }
+                    return {
+                        accessToken: mappedAccount.accessToken,
+                        projectId: await this.ensureProjectId(mappedAccount),
+                        email: mappedAccount.email,
+                        accountId: mappedAccount.id,
+                        proxy: mappedAccount.proxy,
+                    }
+                }
+            }
+        }
+
         // 🆕 是否存在空闲账号（避免选中正在处理的账号）
         const hasIdleAccount = this.accountQueue.some((id) => {
             const account = this.accounts.get(id)
@@ -655,9 +713,9 @@ class AccountManager {
             return !this.inFlightAccounts.has(id)
         })
 
-        // 🆕 粘性策略：使用队列顺序，队首账户优先
+        // 🆕 粘性策略：使用队列顺序，队首账户优先（未开启 Cache-Aware 或无 sessionKey 时的默认逻辑）
         // 如果不是强制轮换，且队首账户可用，则使用它
-        if (!forceRotate && this.accountQueue.length > 0) {
+        if (!forceRotate && !isCacheAwareRoutingEnabled() && this.accountQueue.length > 0) {
             const firstId = this.accountQueue[0]
             const firstAccount = this.accounts.get(firstId)
             if (firstAccount && (!firstAccount.rateLimitedUntil || firstAccount.rateLimitedUntil <= now)) {
@@ -681,6 +739,7 @@ class AccountManager {
                     projectId: await this.ensureProjectId(firstAccount),
                     email: firstAccount.email,
                     accountId: firstAccount.id,
+                    proxy: firstAccount.proxy,
                 }
                 }
             }
@@ -731,14 +790,18 @@ class AccountManager {
                 }
             }
 
-            // 🆕 更新 lastUsedAccount
+            // 🆕 更新 lastUsedAccount & 记录 session 映射
             this.lastUsedAccount = { accountId: account.id, timestamp: Date.now() }
+            if (sessionKey) {
+                this.sessionAccountMap.set(sessionKey, { accountId: account.id, lastSeen: now })
+            }
 
             return {
                 accessToken: account.accessToken,
                 projectId: await this.ensureProjectId(account),
                 email: account.email,
                 accountId: account.id,
+                proxy: account.proxy,
             }
         }
 
@@ -764,11 +827,15 @@ class AccountManager {
             await new Promise(resolve => setTimeout(resolve, minWaitMs + RESET_TIME_BUFFER_MS))
             const refreshed = allAccounts.find(acc => !acc.rateLimitedUntil || acc.rateLimitedUntil <= Date.now())
             if (refreshed) {
+                if (sessionKey) {
+                    this.sessionAccountMap.set(sessionKey, { accountId: refreshed.id, lastSeen: Date.now() })
+                }
                 return {
                     accessToken: refreshed.accessToken,
                     projectId: await this.ensureProjectId(refreshed),
                     email: refreshed.email,
                     accountId: refreshed.id,
+                    proxy: refreshed.proxy,
                 }
             }
         }
@@ -785,6 +852,7 @@ class AccountManager {
         projectId: string
         email: string
         accountId: string
+        proxy?: string
     } | null> {
         this.ensureLoaded()
         if (!this.accounts.has(accountId)) {
@@ -831,6 +899,7 @@ class AccountManager {
             projectId: await this.ensureProjectId(account),
             email: account.email,
             accountId: account.id,
+            proxy: account.proxy,
         }
     }
 

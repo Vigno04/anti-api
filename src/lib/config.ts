@@ -13,6 +13,8 @@ export const BASE_OFFICIAL_MODELS = [
     { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite" },
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    { id: "claude-opus-4-5", name: "Claude Opus 4.5" },
+    { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
     { id: "gpt-oss-120b", name: "GPT-OSS 120B" },
     // Versioni precedenti / legacy per compatibilità
     { id: "gemini-3-flash", name: "Gemini 3 Flash" },

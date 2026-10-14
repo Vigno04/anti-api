@@ -27,6 +27,7 @@ export interface AppSettings {
     onlyActiveProviders: boolean
     separateThinkingModels: boolean
     disabledModels: string[]
+    cacheAwareRouting: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -45,6 +46,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     onlyActiveProviders: true,
     separateThinkingModels: false,
     disabledModels: [],
+    cacheAwareRouting: false,
 }
 
 function detectSystemLanguage(): "en" | "zh-CN" | "it" {
@@ -99,4 +101,11 @@ export function saveSettings(settings: Partial<AppSettings>): AppSettings {
 
 export function getSetting<K extends keyof AppSettings>(key: K): AppSettings[K] {
     return loadSettings()[key]
+}
+
+export function isCacheAwareRoutingEnabled(): boolean {
+    if (process.env.ANTI_API_CACHE_AWARE_ROUTING === "1" || process.env.ANTI_API_ACCOUNT_STRATEGY === "cache_aware") {
+        return true
+    }
+    return loadSettings().cacheAwareRouting ?? false
 }

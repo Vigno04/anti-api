@@ -283,39 +283,44 @@ routingRouter.get("/config", async (c) => {
         if (!antigravitySyncInFlight) {
             lastAntigravitySyncAt = now
             antigravitySyncInFlight = (async () => {
-                const [primaryAccount] = antigravityAccounts
-                if (!primaryAccount) {
-                    clearDynamicAntigravityModels()
-                    antigravitySyncInFlight = null
-                    return
-                }
+                const mergedModels = new Map<string, ProviderModelOption>()
                 try {
-                    const active = await accountManager.getAccountById(primaryAccount.id)
-                    if (!active) {
-                        clearDynamicAntigravityModelsForAccount(primaryAccount.id)
-                        clearDynamicAntigravityModels()
-                        antigravitySyncInFlight = null
-                        return
-                    }
-                    const remote = await fetchAntigravityModels(active.accessToken, active.projectId)
-                    const models = Object.keys(remote.models || {}).map((id) => ({
-                        id,
-                        label: `Antigravity - ${id}`,
-                    }))
-                    if (models.length > 0) {
-                        setDynamicAntigravityModelsForAccount(primaryAccount.id, models)
-                        setDynamicAntigravityModels(models)
-                        consola.debug(`[routing] Antigravity models synced (${models.length}) from ${primaryAccount.id}`)
-                    } else {
-                        clearDynamicAntigravityModelsForAccount(primaryAccount.id)
-                        clearDynamicAntigravityModels()
+                    for (const account of antigravityAccounts) {
+                        try {
+                            const active = await accountManager.getAccountById(account.id)
+                            if (!active) {
+                                clearDynamicAntigravityModelsForAccount(account.id)
+                                continue
+                            }
+                            const remote = await fetchAntigravityModels(active.accessToken, active.projectId, active.proxy)
+                            const models = Object.keys(remote.models || {}).map((id) => ({
+                                id,
+                                label: `Antigravity - ${id}`,
+                            }))
+                            if (models.length > 0) {
+                                setDynamicAntigravityModelsForAccount(account.id, models)
+                                for (const m of models) {
+                                    if (!mergedModels.has(m.id)) mergedModels.set(m.id, m)
+                                }
+                                consola.debug(`[routing] Antigravity models synced (${models.length}) from ${account.id}`)
+                            } else {
+                                clearDynamicAntigravityModelsForAccount(account.id)
+                            }
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error)
+                            clearDynamicAntigravityModelsForAccount(account.id)
+                            consola.debug(`[routing] Antigravity models sync skipped ${account.id}: ${message}`)
+                        }
                     }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error)
-                    clearDynamicAntigravityModelsForAccount(primaryAccount.id)
-                    clearDynamicAntigravityModels()
-                    consola.debug(`[routing] Antigravity models sync skipped ${primaryAccount.id}: ${message}`)
+                    consola.warn(`[routing] Antigravity models sync failed: ${message}`)
                 } finally {
+                    if (mergedModels.size > 0) {
+                        setDynamicAntigravityModels(Array.from(mergedModels.values()))
+                    } else {
+                        clearDynamicAntigravityModels()
+                    }
                     antigravitySyncInFlight = null
                 }
             })()

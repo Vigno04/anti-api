@@ -298,7 +298,6 @@ const LEGACY_ANTIGRAVITY_IDS = new Set([
     "gemini-3.7-flash-tiered",
     "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking",
-    "claude-opus-4-5-thinking",
 ])
 
 function computeModelsCatalog() {
@@ -616,6 +615,50 @@ server.get("/accounts/:id/options", (c) => {
                     label: acc.label || "",
                     proxy: acc.proxy || "",
                     projectId: acc.projectId || "",
+                }
+            })
+        }
+    }
+
+    return c.json({ success: false, error: "Account not found" }, 404)
+})
+
+// 导出账号完整凭证 (JSON)
+server.get("/accounts/:id/export", (c) => {
+    const accountId = c.req.param("id")
+    const providerParam = c.req.query("provider") as AuthProvider | undefined
+
+    // 1. Antigravity 账号
+    const agAcc = accountManager.getAccount(accountId)
+    if (agAcc) {
+        return c.json({
+            success: true,
+            account: {
+                id: agAcc.id,
+                provider: "antigravity",
+                email: agAcc.email,
+                displayName: agAcc.label || agAcc.email,
+                label: agAcc.label || "",
+                proxy: agAcc.proxy || "",
+                projectId: agAcc.projectId || "",
+                accessToken: agAcc.accessToken,
+                refreshToken: agAcc.refreshToken,
+                expiresAt: agAcc.expiresAt,
+            }
+        })
+    }
+
+    // 2. AuthStore 账号
+    const providersToTry = providerParam ? [providerParam] : PROVIDERS
+    for (const prov of providersToTry) {
+        const acc = authStore.getAccount(prov, accountId)
+        if (acc) {
+            return c.json({
+                success: true,
+                account: {
+                    ...acc,
+                    provider: prov,
+                    displayName: acc.label || acc.email || acc.login || acc.id,
                 }
             })
         }

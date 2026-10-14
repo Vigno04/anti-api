@@ -735,6 +735,16 @@
                         </div>
                         <input type="checkbox" id="setting-compact-layout" class="toggle-switch">
                     </label>
+
+                    <!-- Cache-Aware Account Routing -->
+                    <label
+                        class="flex items-center justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 transition-colors cursor-pointer">
+                        <div>
+                            <div class="text-gray-200 font-medium" data-i18n="settings.cacheAwareRouting">Cache-Aware Routing</div>
+                            <div class="text-gray-500 text-xs mt-0.5" data-i18n="settings.cacheAwareRoutingDesc">Stick same chat to the same account for 100% prompt cache hits; distribute new chats to least used account</div>
+                        </div>
+                        <input type="checkbox" id="setting-cache-aware-routing" class="toggle-switch">
+                    </label>
                 </div>
 
                 <div class="space-y-4">
@@ -892,18 +902,25 @@
             </div>
 
             <div class="flex items-center justify-between pt-3 border-t border-[#2f253f]">
-                <button type="button" onclick="pingFromAccountModal()" class="text-xs text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-1">
-                    <span>📡 Test Latency (Ping)</span>
-                </button>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="pingFromAccountModal()" class="text-xs text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-1">
+                        <span>📡 Test Latency</span>
+                    </button>
+                    <span class="text-gray-700">|</span>
+                    <button type="button" id="acc-modal-export-btn" onclick="exportCurrentAccount()" class="text-xs text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1 font-medium">
+                        <span id="acc-modal-export-spinner" class="hidden">🔄</span>
+                        <span>📥 <span data-i18n="accModal.export">Export JSON</span></span>
+                    </button>
+                </div>
                 <div class="flex items-center gap-2">
                     <button type="button" onclick="closeAccountOptionsModal()"
-                        class="px-4 py-2 text-xs font-medium rounded-xl text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors">
+                        class="px-4 py-2 text-xs font-medium rounded-xl text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors" data-i18n="settings.ideLogoutCancel">
                         Cancel
                     </button>
                     <button type="button" id="acc-modal-save-btn" onclick="saveAccountOptions()"
                         class="px-4 py-2 text-xs font-semibold rounded-xl bg-cyan-600 hover:bg-cyan-500 text-black shadow-lg shadow-cyan-600/30 transition-all flex items-center gap-1.5">
                         <span id="acc-modal-save-spinner" class="hidden">🔄</span>
-                        <span>Save Changes</span>
+                        <span data-i18n="common.saveChanges">Save Changes</span>
                     </button>
                 </div>
             </div>
@@ -1210,6 +1227,10 @@
                 'settings.optimizeSortDesc': 'Sort cards by remaining quota within each provider',
                 'settings.autoRestart': 'Auto Restart (Watchdog)',
                 'settings.autoRestartDesc': 'Restart server automatically after a crash',
+                'settings.cacheAwareRouting': 'Cache-Aware Routing',
+                'settings.cacheAwareRoutingDesc': 'Stick same chat to the same account for 100% prompt cache hits; distribute new chats to least used account',
+                'accModal.export': 'Export JSON',
+                'accModal.exportSuccess': 'Account exported successfully',
                 'settings.enableAll': 'Enable All',
                 'settings.disableAll': 'Disable All',
                 'settings.saveNote': 'Settings are saved to ~/.anti-api/settings.json. Click Save to apply changes.',
@@ -1406,6 +1427,10 @@
                 'settings.optimizeSortDesc': '按各 provider 剩余配额排序卡片',
                 'settings.autoRestart': '自动重启（守护）',
                 'settings.autoRestartDesc': '服务崩溃后自动重启',
+                'settings.cacheAwareRouting': '缓存感知路由',
+                'settings.cacheAwareRoutingDesc': '同一对话保持使用同一账号以最大化 Prompt 缓存命中；新对话分配至用量最少的账号',
+                'accModal.export': '导出 JSON',
+                'accModal.exportSuccess': '账号已成功导出',
                 'settings.enableAll': '全部启用',
                 'settings.disableAll': '全部禁用',
                 'settings.saveNote': '设置保存到 ~/.anti-api/settings.json。点击保存后生效。',
@@ -1603,6 +1628,10 @@
                 'settings.optimizeSortDesc': 'Ordina le schede per quota residua all\'interno di ciascun provider',
                 'settings.autoRestart': 'Riavvio Automatico (Watchdog)',
                 'settings.autoRestartDesc': 'Riavvia automaticamente il server dopo un crash',
+                'settings.cacheAwareRouting': 'Routing Cache-Aware',
+                'settings.cacheAwareRoutingDesc': 'Mantiene la stessa sessione di chat sullo stesso account per massimizzare la cache prompt; distribuisce nuove chat all\'account meno usato',
+                'accModal.export': 'Esporta JSON',
+                'accModal.exportSuccess': 'Account esportato con successo',
                 'settings.enableAll': 'Abilita Tutti',
                 'settings.disableAll': 'Disabilita Tutti',
                 'settings.saveNote': 'Le impostazioni vengono salvate in ~/.anti-api/settings.json. Clicca Salva per applicare.',
@@ -1783,6 +1812,7 @@
                 autoRestart: document.getElementById('setting-auto-restart').checked,
                 privacyMode: document.getElementById('setting-privacy-mode').checked,
                 compactLayout: document.getElementById('setting-compact-layout').checked,
+                cacheAwareRouting: document.getElementById('setting-cache-aware-routing')?.checked ?? false,
                 trackUsage: document.getElementById('setting-track-usage').checked,
                 optimizeQuotaSort: document.getElementById('setting-optimize-quota-sort').checked,
                 captureLogs: document.getElementById('setting-capture-logs').checked
@@ -1827,6 +1857,7 @@
             document.getElementById('setting-auto-restart').checked = false;
             document.getElementById('setting-privacy-mode').checked = false;
             document.getElementById('setting-compact-layout').checked = false;
+            if (document.getElementById('setting-cache-aware-routing')) document.getElementById('setting-cache-aware-routing').checked = false;
             document.getElementById('setting-track-usage').checked = true;
             document.getElementById('setting-optimize-quota-sort').checked = false;
             document.getElementById('setting-capture-logs').checked = false;
@@ -1844,6 +1875,7 @@
             document.getElementById('setting-auto-restart').checked = true;
             document.getElementById('setting-privacy-mode').checked = true;
             document.getElementById('setting-compact-layout').checked = true;
+            if (document.getElementById('setting-cache-aware-routing')) document.getElementById('setting-cache-aware-routing').checked = true;
             document.getElementById('setting-track-usage').checked = true;
             document.getElementById('setting-optimize-quota-sort').checked = true;
             document.getElementById('setting-capture-logs').checked = true;
@@ -1860,6 +1892,7 @@
             document.getElementById('setting-auto-restart').checked = false;
             document.getElementById('setting-privacy-mode').checked = false;
             document.getElementById('setting-compact-layout').checked = false;
+            if (document.getElementById('setting-cache-aware-routing')) document.getElementById('setting-cache-aware-routing').checked = false;
             document.getElementById('setting-track-usage').checked = false;
             document.getElementById('setting-optimize-quota-sort').checked = false;
             document.getElementById('setting-capture-logs').checked = false;
@@ -2239,6 +2272,11 @@
             document.getElementById('setting-auto-restart').checked = settings.autoRestart;
             document.getElementById('setting-privacy-mode').checked = settings.privacyMode;
             document.getElementById('setting-compact-layout').checked = settings.compactLayout;
+            const cacheAwareEl = document.getElementById('setting-cache-aware-routing');
+            if (cacheAwareEl) {
+                cacheAwareEl.checked = !!settings.cacheAwareRouting;
+                cacheAwareEl.onchange = () => saveAllSettings();
+            }
             document.getElementById('setting-track-usage').checked = settings.trackUsage;
             document.getElementById('setting-optimize-quota-sort').checked = settings.optimizeQuotaSort;
             document.getElementById('setting-capture-logs').checked = settings.captureLogs;
@@ -3086,6 +3124,40 @@
             const card = document.querySelector(`[data-account-id="${CSS.escape(currentModalAccount.accountId)}"]`);
             if (card) {
                 await pingAccountCard(card);
+            }
+        }
+
+        async function exportCurrentAccount() {
+            if (!currentModalAccount) return;
+            const spinner = document.getElementById('acc-modal-export-spinner');
+            const exportBtn = document.getElementById('acc-modal-export-btn');
+            if (spinner) spinner.classList.remove('hidden');
+            if (exportBtn) exportBtn.disabled = true;
+
+            try {
+                const res = await fetch(`${API_BASE}/accounts/${encodeURIComponent(currentModalAccount.accountId)}/export?provider=${encodeURIComponent(currentModalAccount.provider)}`);
+                const data = await res.json();
+                if (data.success && data.account) {
+                    const exportData = JSON.stringify(data.account, null, 2);
+                    const blob = new Blob([exportData], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const safeName = (data.account.displayName || data.account.email || data.account.id || 'account').replace(/[^a-zA-Z0-9_-]/g, '_');
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${data.account.provider || 'anti-api'}-${safeName}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showToast(t('accModal.exportSuccess') || 'Account exported successfully');
+                } else {
+                    showToast(data.error || 'Failed to export account');
+                }
+            } catch (e) {
+                showToast(e.message || 'Export failed');
+            } finally {
+                if (spinner) spinner.classList.add('hidden');
+                if (exportBtn) exportBtn.disabled = false;
             }
         }
 

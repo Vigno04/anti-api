@@ -165,6 +165,10 @@ const MODEL_MAPPING: Record<string, string> = {
     "claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
     "claude-sonnet-4.5-thinking": "claude-sonnet-4-5-thinking",
     "claude-sonnet-4-5-20251001": "claude-sonnet-4-5",
+    "claude-opus-4-5": "claude-opus-4-5-thinking",
+    "claude-opus-4.5": "claude-opus-4-5-thinking",
+    "claude-opus-5-5": "claude-opus-4-5-thinking",
+    "claude-opus-5.5": "claude-opus-4-5-thinking",
     "claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
     "claude-opus-4-6": "claude-opus-4-6-thinking",
     "claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
@@ -244,6 +248,21 @@ function generateStableSessionId(messages: ClaudeMessage[]): string {
         return "-" + (Math.abs(hash) * 1000000000000).toString()
     }
     return "-" + Math.floor(Math.random() * 9e18).toString()
+}
+
+export function computeSessionKey(messages: ClaudeMessage[]): string {
+    for (const msg of messages) {
+        const text = extractTextContent(msg.content)?.trim()
+        if (text && text.length > 3) {
+            let hash = 5381
+            const len = Math.min(text.length, 300)
+            for (let i = 0; i < len; i++) {
+                hash = ((hash << 5) + hash) + text.charCodeAt(i)
+            }
+            return `ag_sess_${Math.abs(hash)}`
+        }
+    }
+    return `ag_sess_${Date.now()}`
 }
 
 function extractTextContent(content: any): string {
@@ -763,7 +782,8 @@ async function sendRequestSse(
     accountId?: string,
     allowRotation: boolean = true,
     modelName?: string,
-    routeTag?: string
+    routeTag?: string,
+    sessionKey?: string
 ): Promise<string> {
     const startTime = Date.now()
     let lastError: Error | null = null
@@ -872,7 +892,7 @@ async function sendRequestSse(
                         }
 
                         if (allowRotation && accountManager.count() > 1) {
-                            const next = await accountManager.getNextAvailableAccount(true)
+                            const next = await accountManager.getNextAvailableAccount(true, sessionKey)
                             if (next && next.accountId !== currentAccountId) {
                                 currentAccessToken = next.accessToken
                                 currentAccountId = next.accountId
@@ -887,7 +907,7 @@ async function sendRequestSse(
                         const cooldownMs = Math.max(boundedDelayMs, NON_QUOTA_429_COOLDOWN_MS)
                         accountManager.markRateLimited(currentAccountId, cooldownMs)
                         if (allowRotation && accountManager.count() > 1) {
-                            const next = await accountManager.getNextAvailableAccount(true)
+                            const next = await accountManager.getNextAvailableAccount(true, sessionKey)
                             if (next && next.accountId !== currentAccountId) {
                                 currentAccessToken = next.accessToken
                                 currentAccountId = next.accountId
@@ -920,7 +940,7 @@ async function sendRequestSse(
                     }
                     // If refresh failed, try next account
                     if (allowRotation && accountManager.count() > 1) {
-                        const next = await accountManager.getNextAvailableAccount(true)
+                        const next = await accountManager.getNextAvailableAccount(true, sessionKey)
                         if (next && next.accountId !== currentAccountId) {
                             currentAccessToken = next.accessToken
                             currentAccountId = next.accountId
@@ -1007,7 +1027,8 @@ async function* sendRequestSseStreaming(
     allowRotation: boolean = true,
     modelName?: string,
     routeTag?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    sessionKey?: string
 ): AsyncGenerator<string, void, unknown> {
     const startTime = Date.now()
     const IDLE_TIMEOUT_MS = 900000  // 超过 15 分钟无数据则中断
@@ -1095,7 +1116,7 @@ async function* sendRequestSseStreaming(
                         const cooldownMs = Math.max(waitMs, NON_QUOTA_429_COOLDOWN_MS)
                         accountManager.markRateLimited(currentAccountId, cooldownMs)
                         if (allowRotation && accountManager.count() > 1) {
-                            const next = await accountManager.getNextAvailableAccount(true)
+                            const next = await accountManager.getNextAvailableAccount(true, sessionKey)
                             if (next && next.accountId !== currentAccountId) {
                                 currentAccessToken = next.accessToken
                                 currentAccountId = next.accountId
@@ -1301,6 +1322,8 @@ export async function createChatCompletionWithOptions(
     let accountEmail: string | undefined
     let releaseAccountLock: (() => void) | null = null
 
+    const sessionKey = computeSessionKey(request.messages)
+
     if (options.accountId) {
         const account = await accountManager.getAccountById(options.accountId)
         if (!account) {
@@ -1311,7 +1334,7 @@ export async function createChatCompletionWithOptions(
         projectId = account.projectId
         accountEmail = account.email
     } else {
-        const account = await accountManager.getNextAvailableAccount()
+        const account = await accountManager.getNextAvailableAccount(false, sessionKey)
         if (account) {
             accessToken = account.accessToken
             accountId = account.accountId
@@ -1349,7 +1372,8 @@ export async function createChatCompletionWithOptions(
             accountId,
             options.allowRotation ?? true,
             request.model,
-            options.routeTag
+            options.routeTag,
+            sessionKey
         )
         const sseChunks = collectSseChunks(rawSse)
         const rawResponse = sseChunks.length > 0 ? JSON.stringify(sseChunks) : rawSse
@@ -1361,6 +1385,9 @@ export async function createChatCompletionWithOptions(
         const outputTokens = result.usage?.outputTokens || 0
         const actualModelId = getAntigravityModelName(request.model)
         if (inputTokens > 0 || outputTokens > 0) {
+            if (accountId) {
+                accountManager.recordAccountUsage(accountId, inputTokens + outputTokens)
+            }
             import("~/services/usage-tracker").then(({ recordUsage }) => {
                 recordUsage(actualModelId, inputTokens, outputTokens)
             }).catch(() => { })
@@ -1386,6 +1413,8 @@ export async function* createChatCompletionStreamWithOptions(
     let accountEmail: string | undefined
     let releaseAccountLock: (() => void) | null = null
 
+    const sessionKey = computeSessionKey(request.messages)
+
     if (options.accountId) {
         const account = await accountManager.getAccountById(options.accountId)
         if (!account) {
@@ -1396,7 +1425,7 @@ export async function* createChatCompletionStreamWithOptions(
         projectId = account.projectId
         accountEmail = account.email
     } else {
-        const account = await accountManager.getNextAvailableAccount()
+        const account = await accountManager.getNextAvailableAccount(false, sessionKey)
         if (account) {
             accessToken = account.accessToken
             accountId = account.accountId
@@ -1434,7 +1463,8 @@ export async function* createChatCompletionStreamWithOptions(
             options.allowRotation ?? true,
             request.model,
             options.routeTag,
-            request.signal
+            request.signal,
+            sessionKey
         )
 
         let blockIndex = 0
@@ -1552,6 +1582,9 @@ export async function* createChatCompletionStreamWithOptions(
         // Record usage (fire-and-forget) - use actual native model ID
         const actualModelId = getAntigravityModelName(request.model)
         if (outputTokens > 0) {
+            if (accountId) {
+                accountManager.recordAccountUsage(accountId, outputTokens)
+            }
             import("~/services/usage-tracker").then(({ recordUsage }) => {
                 recordUsage(actualModelId, 0, outputTokens)
             }).catch(() => { })

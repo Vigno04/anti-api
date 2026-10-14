@@ -66,6 +66,9 @@ export function mapModel(openaiModel: string, reasoningEffort?: "low" | "medium"
             ? "claude-opus-4-6-thinking"
             : "claude-opus-4-6-thinking"
     }
+    if (norm === "claude-opus-4-5" || norm === "claude-opus-5-5") {
+        return "claude-opus-4-5-thinking"
+    }
 
     return raw
 }

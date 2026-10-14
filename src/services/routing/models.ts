@@ -267,14 +267,14 @@ export function getProviderModels(provider: AuthProvider, options?: { includeAll
             id: model.id,
             label: model.name,
         }))
-        if (!separateThinking) {
+        const dynamicMerged = mergeModelOptions(
+            flattenDynamicModelsByAccount(dynamicAntigravityModelsByAccount),
+            dynamicAntigravityModels
+        )
+        if (dynamicMerged.length === 0) {
             return staticModels
         }
-        return mergeModelOptions(
-            flattenDynamicModelsByAccount(dynamicAntigravityModelsByAccount),
-            dynamicAntigravityModels,
-            staticModels
-        )
+        return mergeModelOptions(dynamicMerged, staticModels)
     }
 
 
