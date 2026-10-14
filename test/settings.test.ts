@@ -61,6 +61,11 @@ test("loadSettings returns defaults in a fresh home", async () => {
         trackUsage: true,
         optimizeQuotaSort: false,
         captureLogs: false,
+        latestModelsOnly: true,
+        onlyActiveProviders: true,
+        separateThinkingModels: false,
+        cacheAwareRouting: false,
+        disabledModels: [],
     })
 
     rmSync(dir, { recursive: true, force: true })

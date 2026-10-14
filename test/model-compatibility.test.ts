@@ -62,3 +62,27 @@ test("Gemini 3.1 models map to the corresponding Antigravity proto enums", () =>
     expect(getModelEnumValue("gemini-3.1-flash")).toBe(MODEL_ENUM.GEMINI_3_FLASH)
     expect(getModelEnumValue("gemini-3.1-flash-lite")).toBe(MODEL_ENUM.GEMINI_3_FLASH)
 })
+
+test("getProviderModels antigravity respects includeAllVariants flag", () => {
+    const baseModels = getProviderModels("antigravity", { includeAllVariants: false })
+    const baseIds = baseModels.map(m => m.id)
+
+    expect(baseIds).toContain("claude-opus-5-5")
+    expect(baseIds).toContain("claude-sonnet-5-5")
+    expect(baseIds).toContain("gemini-3.1-pro")
+    expect(baseIds).toContain("gemini-3.8-flash")
+    expect(baseIds).toContain("gemini-3.5-flash-lite")
+    expect(baseIds).toContain("gpt-oss-120b")
+
+    for (const id of baseIds) {
+        expect(id.endsWith("-high")).toBe(false)
+        expect(id.endsWith("-low")).toBe(false)
+        expect(id.endsWith("-medium")).toBe(false)
+        expect(id.endsWith("-thinking")).toBe(false)
+    }
+
+    const allModels = getProviderModels("antigravity", { includeAllVariants: true })
+    const allIds = allModels.map(m => m.id)
+    expect(allIds.some(id => id.endsWith("-high") || id.endsWith("-thinking"))).toBe(true)
+})
+

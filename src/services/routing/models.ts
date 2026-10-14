@@ -304,7 +304,7 @@ export function getProviderModels(
             const aliasModels = Array.from(getAntigravityCatalog().aliases.keys()).map(id => ({ id, label: id }))
             return mergeModelOptions(getAllAntigravityModels(), aliasModels)
         }
-        const separateThinking = options?.includeAllVariants ? true : isSeparateThinkingModelsEnabled()
+        const separateThinking = options?.includeAllVariants !== undefined ? options.includeAllVariants : isSeparateThinkingModelsEnabled()
         return getCatalogAntigravityModels(separateThinking)
     }
 

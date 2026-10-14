@@ -349,8 +349,14 @@ async function fetchAntigravityModelsForAccount(
 function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
     const claudeGptIds = [
         "claude-opus-5-5",
+        "claude-opus-5-5-high",
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-low",
         "claude-opus-5-5-thinking",
         "claude-sonnet-5-5",
+        "claude-sonnet-5-5-high",
+        "claude-sonnet-5-5-medium",
+        "claude-sonnet-5-5-low",
         "claude-sonnet-5-5-thinking",
         "claude-opus-4-6-thinking",
         "claude-sonnet-4-6",
@@ -358,14 +364,39 @@ function buildAntigravityBars(models: Record<string, ModelInfo>): AccountBar[] {
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-thinking",
         "gpt-oss-120b",
+        "gpt-oss-120b-medium",
     ]
     const gproIds = [
-        "gemini-3-pro-low",
-        "gemini-3-pro-high",
-        "gemini-3.1-pro-low",
+        "gemini-pro-agent",
         "gemini-3.1-pro-high",
+        "gemini-3.1-pro-low",
+        "gemini-3.1-pro",
+        "gemini-pro",
+        "gemini-3-pro-high",
+        "gemini-3-pro-low",
     ]
-    const gflashIds = ["gemini-3-flash", "gemini-3.1-flash", "gemini-3.1-flash-lite"]
+    const gflashIds = [
+        "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash-high",
+        "gemini-3.7-flash-medium",
+        "gemini-3.7-flash-low",
+        "gemini-3.6-flash-high",
+        "gemini-3.6-flash-medium",
+        "gemini-3.6-flash-low",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash-low",
+        "gemini-3.5-flash-extra-low",
+        "gemini-3.1-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash-thinking",
+        "gemini-flash",
+    ]
 
     return [
         buildMergedBar("claude_gpt", "claude&gpt", models, claudeGptIds),
@@ -385,7 +416,7 @@ function buildMergedBar(
         .filter(Boolean)
 
     if (entries.length === 0) {
-        return { key, label, percentage: 0 }
+        return { key, label, percentage: 100 }
     }
 
     const percentages = entries.map(item => Math.round((item?.remainingFraction ?? 0) * 100))

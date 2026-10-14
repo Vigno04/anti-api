@@ -2492,7 +2492,14 @@
 
             container.innerHTML = '';
 
+            const showLatestOnly = settings.latestModelsOnly !== false;
+            const showActiveProvidersOnly = settings.onlyActiveProviders !== false;
+            const showSeparateThinking = !!settings.separateThinkingModels;
+
             const filtered = allAvailable.filter(m => {
+                if (showActiveProvidersOnly && !m.isProviderActive) return false;
+                if (showLatestOnly && m.isLegacy) return false;
+                if (!showSeparateThinking && m.isThinking) return false;
                 if (!searchTerm) return true;
                 return m.id.toLowerCase().includes(searchTerm) || m.name.toLowerCase().includes(searchTerm) || m.owned_by.toLowerCase().includes(searchTerm);
             });

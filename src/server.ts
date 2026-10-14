@@ -298,23 +298,18 @@ function computeModelsCatalog() {
     const separateThinking = settings.separateThinkingModels ?? isSeparateThinkingModelsEnabled()
 
     const providerModels: ModelListEntry[] = targetProviders.flatMap((provider) =>
-        getProviderModels(provider, { includeAllVariants: separateThinking }).map(model => ({
+        getProviderModels(provider, {
+            includeAllVariants: separateThinking,
+            includeLegacy: !(settings.latestModelsOnly ?? true),
+        }).map(model => ({
             id: model.id,
             name: model.label,
             owned_by: provider,
         }))
     )
 
-    const baseModels: ModelListEntry[] = (activeProviderSet.has("antigravity") || !settings.onlyActiveProviders)
-        ? getProviderModels("antigravity", { includeAllVariants: separateThinking, includeLegacy: !(settings.latestModelsOnly ?? true) }).map(model => ({
-            id: model.id,
-            name: model.label,
-            owned_by: "antigravity",
-        }))
-        : []
-
     const seen = new Set<string>()
-    let models = [...baseModels, ...providerModels, ...routeModels].filter(model => {
+    let models = [...providerModels, ...routeModels].filter(model => {
         if (seen.has(model.id)) return false
         seen.add(model.id)
         return true
@@ -323,6 +318,16 @@ function computeModelsCatalog() {
     // Filter: latestModelsOnly (keep flagship per family, drop legacy)
     if (settings.latestModelsOnly ?? true) {
         models = models.filter(m => !(m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)))
+    }
+
+    // Filter: separateThinkingModels (if false, drop any explicit thinking variants)
+    if (!separateThinking) {
+        models = models.filter(m => !(
+            m.id.endsWith("-high") ||
+            m.id.endsWith("-low") ||
+            m.id.endsWith("-medium") ||
+            m.id.endsWith("-thinking")
+        ))
     }
 
     // Filter: disabledModels
@@ -362,23 +367,17 @@ server.get("/v1beta/models", modelsHandler)
 server.get("/models", modelsHandler)  // 无前缀版本 for GUI tools
 
 // API 仪表盘模型目录与实时状态
-server.get("/api/models-catalog", (c: any) => {
+server.get("/api/models-catalog", async (c: any) => {
     const routingConfig = loadRoutingConfig()
     const settings = loadSettings()
-    const separateThinking = settings.separateThinkingModels ?? isSeparateThinkingModelsEnabled()
 
     const activeProviderSet = new Set(
         PROVIDERS.filter(p => authStore.listAccounts(p).length > 0)
     )
 
-    // All available models without filters
-    const allBase: ModelListEntry[] = getProviderModels("antigravity", { includeLegacy: true }).map(model => ({
-        id: model.id,
-        name: model.label,
-        owned_by: "antigravity",
-    }))
+    // All available models across providers
     const allProviders: ModelListEntry[] = PROVIDERS.flatMap(provider =>
-        getProviderModels(provider, { includeAllVariants: true }).map(model => ({
+        getProviderModels(provider, { includeAllVariants: true, includeLegacy: true }).map(model => ({
             id: model.id,
             name: model.label,
             owned_by: provider,
@@ -392,31 +391,32 @@ server.get("/api/models-catalog", (c: any) => {
 
     const quotaSnapshot = await getAggregatedQuota().catch(() => null)
     const antigravityExhaustedModels = new Set<string>()
-    if (quotaSnapshot?.accounts) {
-        for (const acc of quotaSnapshot.accounts) {
-            if (acc.provider === "antigravity" && acc.bars) {
-                for (const bar of acc.bars) {
-                    if (bar.percentage <= 0) {
-                        if (bar.key === "claude_gpt") {
-                            antigravityExhaustedModels.add("claude-opus-5-5")
-                            antigravityExhaustedModels.add("claude-sonnet-5-5")
-                            antigravityExhaustedModels.add("gpt-oss-120b")
-                        } else if (bar.key === "gpro") {
-                            antigravityExhaustedModels.add("gemini-3.1-pro")
-                            antigravityExhaustedModels.add("gemini-pro")
-                        } else if (bar.key === "gflash") {
-                            antigravityExhaustedModels.add("gemini-3.8-flash")
-                            antigravityExhaustedModels.add("gemini-3.5-flash-lite")
-                            antigravityExhaustedModels.add("gemini-flash")
-                        }
-                    }
-                }
-            }
+    const antigravityAccounts = (quotaSnapshot?.accounts || []).filter(a => a.provider === "antigravity")
+    if (antigravityAccounts.length > 0) {
+        const hasAvailableForBar = (barKey: string) => {
+            return antigravityAccounts.some(acc => {
+                const bar = (acc.bars || []).find(b => b.key === barKey)
+                return bar ? bar.percentage > 0 : true
+            })
+        }
+        if (!hasAvailableForBar("claude_gpt")) {
+            antigravityExhaustedModels.add("claude-opus-5-5")
+            antigravityExhaustedModels.add("claude-sonnet-5-5")
+            antigravityExhaustedModels.add("gpt-oss-120b")
+        }
+        if (!hasAvailableForBar("gpro")) {
+            antigravityExhaustedModels.add("gemini-3.1-pro")
+            antigravityExhaustedModels.add("gemini-pro")
+        }
+        if (!hasAvailableForBar("gflash")) {
+            antigravityExhaustedModels.add("gemini-3.8-flash")
+            antigravityExhaustedModels.add("gemini-3.5-flash-lite")
+            antigravityExhaustedModels.add("gemini-flash")
         }
     }
 
     const seenAll = new Set<string>()
-    const allAvailable = [...allBase, ...allProviders, ...allRoutes].filter(m => {
+    const allAvailable = [...allProviders, ...allRoutes].filter(m => {
         if (seenAll.has(m.id)) return false
         seenAll.add(m.id)
         return true
