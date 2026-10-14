@@ -11,9 +11,10 @@ export type AntigravityModelInfo = {
 
 export async function fetchAntigravityModels(
     accessToken: string,
-    projectId?: string | null
+    projectId?: string | null,
+    proxy?: string
 ): Promise<{ models: Record<string, AntigravityModelInfo>; projectId: string | null }> {
-    const resolvedProjectId = projectId || await getProjectID(accessToken) || generateMockProjectId()
+    const resolvedProjectId = projectId || await getProjectID(accessToken, proxy) || generateMockProjectId()
     const project = resolvedProjectId
 
     const response = await fetchJson(`${CLOUD_CODE_BASE_URL}/v1internal:fetchAvailableModels`, {
@@ -24,6 +25,7 @@ export async function fetchAntigravityModels(
             "User-Agent": getAntigravityUserAgent(),
         },
         body: JSON.stringify({ project }),
+        proxy,
     })
 
     if (response.status < 200 || response.status >= 300) {

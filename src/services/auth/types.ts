@@ -7,6 +7,7 @@ export interface ProviderAccount {
     email?: string
     login?: string
     label?: string
+    proxy?: string
     accessToken: string
     refreshToken?: string
     expiresAt?: number
@@ -26,5 +27,6 @@ export interface ProviderAccountSummary {
     email?: string
     login?: string
     label?: string
+    proxy?: string
     expiresAt?: number
 }

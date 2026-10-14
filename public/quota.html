@@ -834,6 +834,80 @@
                 class="hover:text-gray-400 transition-colors">Silas</a> · <a href="https://github.com/silasxbt/anti-api"
                 target="_blank" class="hover:text-gray-400 transition-colors">github.com/silasxbt/anti-api</a>
         </div>
+    <!-- Account Options & Egress Proxy Modal -->
+    <div id="account-options-modal"
+        class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-lg p-6 text-gray-200 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-[#2f253f]">
+                <div class="flex items-center gap-3">
+                    <div id="acc-modal-logo" class="flex-shrink-0"></div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-base font-bold text-gray-100">Account Options</h2>
+                            <span id="acc-modal-provider-badge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-900/40 border border-purple-700/50 text-purple-300"></span>
+                        </div>
+                        <p id="acc-modal-id-subtitle" class="text-xs text-gray-400 font-mono truncate max-w-[260px]"></p>
+                    </div>
+                </div>
+                <button onclick="closeAccountOptionsModal()" class="text-gray-400 hover:text-gray-200 text-base p-1">✕</button>
+            </div>
+
+            <div class="space-y-4 text-xs">
+                <div>
+                    <label class="block font-semibold text-gray-300 mb-1.5">Custom Label / Alias</label>
+                    <input id="acc-modal-label-input" type="text"
+                        placeholder="e.g. Work, Backup, Residential Proxy"
+                        class="w-full bg-[#16161a] border border-[#2f253f] focus:border-cyan-500 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-gray-100 placeholder-gray-600 transition-colors" />
+                    <p class="text-[11px] text-gray-500 mt-1">Friendly display name shown on dashboard cards.</p>
+                </div>
+
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="block font-semibold text-gray-300">🌐 Egress Proxy</label>
+                        <span class="text-[10px] text-gray-400 font-mono">http://, socks5://</span>
+                    </div>
+                    <input id="acc-modal-proxy-input" type="text"
+                        placeholder="http://user:pass@host:port or socks5://host:port"
+                        class="w-full bg-[#16161a] border border-[#2f253f] focus:border-cyan-500 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-gray-100 font-mono placeholder-gray-600 transition-colors" />
+                    <p class="text-[11px] text-gray-500 mt-1">
+                        All outgoing API calls and token refreshes for this account will route through this proxy. Leave empty for direct host egress.
+                    </p>
+                    <div class="mt-2.5 flex items-center gap-2">
+                        <button type="button" id="acc-modal-test-btn" onclick="testAccountProxy()"
+                            class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-cyan-400 border border-cyan-800/40 transition-colors flex items-center gap-1.5 font-medium">
+                            <span id="acc-modal-test-spinner" class="hidden">🔄</span>
+                            <span>⚡ Test Proxy Connection</span>
+                        </button>
+                        <span id="acc-modal-test-result" class="text-[11px] text-gray-400 truncate flex-1"></span>
+                    </div>
+                </div>
+
+                <div id="acc-modal-project-group">
+                    <label class="block font-semibold text-gray-300 mb-1.5">Google Cloud Project ID</label>
+                    <input id="acc-modal-project-input" type="text"
+                        placeholder="e.g. aicode-consumers"
+                        class="w-full bg-[#16161a] border border-[#2f253f] focus:border-cyan-500 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-gray-100 font-mono placeholder-gray-600 transition-colors" />
+                    <p class="text-[11px] text-gray-500 mt-1">Cloud AI Companion project ID (Antigravity only).</p>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-3 border-t border-[#2f253f]">
+                <button type="button" onclick="pingFromAccountModal()" class="text-xs text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-1">
+                    <span>📡 Test Latency (Ping)</span>
+                </button>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="closeAccountOptionsModal()"
+                        class="px-4 py-2 text-xs font-medium rounded-xl text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors">
+                        Cancel
+                    </button>
+                    <button type="button" id="acc-modal-save-btn" onclick="saveAccountOptions()"
+                        class="px-4 py-2 text-xs font-semibold rounded-xl bg-cyan-600 hover:bg-cyan-500 text-black shadow-lg shadow-cyan-600/30 transition-all flex items-center gap-1.5">
+                        <span id="acc-modal-save-spinner" class="hidden">🔄</span>
+                        <span>Save Changes</span>
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Diagnostics Modal -->
@@ -2656,13 +2730,13 @@
                     });
                 }
 
-                if (!card.dataset.pingBound) {
-                    card.dataset.pingBound = 'true';
+                if (!card.dataset.optionsBound) {
+                    card.dataset.optionsBound = 'true';
                     card.addEventListener('click', (e) => {
                         if (e.target.closest('button') || e.target.closest('a') || e.target.closest('input')) {
                             return;
                         }
-                        pingAccountCard(card);
+                        openAccountOptionsModal(card);
                     });
                 }
             });
@@ -2857,13 +2931,182 @@
             showToast(t('quota.copiedModel', { model: modelId }));
         }
 
+        let currentModalAccount = null;
+
+        function openAccountOptionsModal(cardOrData) {
+            const modal = document.getElementById('account-options-modal');
+            if (!modal) return;
+
+            let provider, accountId, displayName, proxy, label;
+            if (cardOrData instanceof HTMLElement) {
+                provider = cardOrData.dataset.provider || 'antigravity';
+                accountId = cardOrData.dataset.accountId || '';
+                displayName = cardOrData.dataset.displayName || accountId;
+                proxy = cardOrData.dataset.proxy || '';
+                label = cardOrData.dataset.label || '';
+            } else {
+                provider = cardOrData.provider || 'antigravity';
+                accountId = cardOrData.accountId || '';
+                displayName = cardOrData.displayName || accountId;
+                proxy = cardOrData.proxy || '';
+                label = cardOrData.label || '';
+            }
+
+            currentModalAccount = { provider, accountId, displayName };
+
+            const logoContainer = document.getElementById('acc-modal-logo');
+            if (logoContainer) logoContainer.innerHTML = getProviderLogo(provider, `modal-${accountId}`);
+            const badge = document.getElementById('acc-modal-provider-badge');
+            if (badge) badge.textContent = provider.toUpperCase();
+            const subtitle = document.getElementById('acc-modal-id-subtitle');
+            if (subtitle) subtitle.textContent = displayName;
+            const labelInput = document.getElementById('acc-modal-label-input');
+            if (labelInput) labelInput.value = label;
+            const proxyInput = document.getElementById('acc-modal-proxy-input');
+            if (proxyInput) proxyInput.value = proxy;
+            const testResult = document.getElementById('acc-modal-test-result');
+            if (testResult) testResult.textContent = '';
+
+            const projectGroup = document.getElementById('acc-modal-project-group');
+            if (projectGroup) {
+                if (provider === 'antigravity') {
+                    projectGroup.classList.remove('hidden');
+                } else {
+                    projectGroup.classList.add('hidden');
+                }
+            }
+
+            // Fetch fresh details from backend
+            fetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/options?provider=${encodeURIComponent(provider)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.success && data.account) {
+                        const acc = data.account;
+                        if (labelInput) labelInput.value = acc.label || '';
+                        if (proxyInput) proxyInput.value = acc.proxy || '';
+                        const projectInput = document.getElementById('acc-modal-project-input');
+                        if (acc.projectId && projectInput) {
+                            projectInput.value = acc.projectId;
+                        }
+                    }
+                })
+                .catch(() => {});
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeAccountOptionsModal() {
+            const modal = document.getElementById('account-options-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            currentModalAccount = null;
+        }
+
+        async function testAccountProxy() {
+            const proxyInput = document.getElementById('acc-modal-proxy-input');
+            const resultEl = document.getElementById('acc-modal-test-result');
+            const spinner = document.getElementById('acc-modal-test-spinner');
+            const proxy = (proxyInput.value || '').trim();
+
+            if (!proxy) {
+                resultEl.textContent = '❌ Enter a proxy URL first';
+                resultEl.className = 'text-[11px] text-amber-400 truncate flex-1';
+                return;
+            }
+
+            resultEl.textContent = 'Testing connection...';
+            resultEl.className = 'text-[11px] text-gray-400 truncate flex-1';
+            spinner.classList.remove('hidden');
+
+            try {
+                const res = await fetch(`${API_BASE}/accounts/test-proxy`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ proxy })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    resultEl.textContent = `✅ Connected (${data.latencyMs}ms, IP: ${data.exitIp})`;
+                    resultEl.className = 'text-[11px] text-emerald-400 font-mono truncate flex-1';
+                } else {
+                    resultEl.textContent = `❌ ${data.error || 'Failed'}`;
+                    resultEl.className = 'text-[11px] text-red-400 truncate flex-1';
+                }
+            } catch (e) {
+                resultEl.textContent = `❌ ${e.message || 'Error'}`;
+                resultEl.className = 'text-[11px] text-red-400 truncate flex-1';
+            } finally {
+                spinner.classList.add('hidden');
+            }
+        }
+
+        async function saveAccountOptions() {
+            if (!currentModalAccount) return;
+            const spinner = document.getElementById('acc-modal-save-spinner');
+            const saveBtn = document.getElementById('acc-modal-save-btn');
+            const label = document.getElementById('acc-modal-label-input').value;
+            const proxy = document.getElementById('acc-modal-proxy-input').value;
+            const projectInput = document.getElementById('acc-modal-project-input');
+            const projectId = projectInput ? projectInput.value : undefined;
+
+            spinner.classList.remove('hidden');
+            saveBtn.disabled = true;
+
+            try {
+                const res = await fetch(`${API_BASE}/accounts/${encodeURIComponent(currentModalAccount.accountId)}/options`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: currentModalAccount.provider,
+                        label,
+                        proxy,
+                        projectId
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Account options saved');
+                    closeAccountOptionsModal();
+                    fetchQuota(false);
+                } else {
+                    showToast(data.error || 'Failed to save options');
+                }
+            } catch (e) {
+                showToast(e.message || 'Error saving options');
+            } finally {
+                spinner.classList.add('hidden');
+                saveBtn.disabled = false;
+            }
+        }
+
+        async function pingFromAccountModal() {
+            if (!currentModalAccount) return;
+            const card = document.querySelector(`[data-account-id="${CSS.escape(currentModalAccount.accountId)}"]`);
+            if (card) {
+                await pingAccountCard(card);
+            }
+        }
+
         document.addEventListener('click', (event) => {
-            const button = event.target.closest('[data-delete-account]');
-            if (!button) return;
-            event.stopPropagation();
-            const card = button.closest('[data-account-id]');
-            if (!card) return;
-            deleteAccount(card.dataset.accountId || '', card.dataset.displayName || card.dataset.accountId || '');
+            const deleteBtn = event.target.closest('[data-delete-account]');
+            if (deleteBtn) {
+                event.stopPropagation();
+                const card = deleteBtn.closest('[data-account-id]');
+                if (!card) return;
+                deleteAccount(card.dataset.accountId || '', card.dataset.displayName || card.dataset.accountId || '');
+                return;
+            }
+
+            const editBtn = event.target.closest('[data-edit-account]');
+            if (editBtn) {
+                event.stopPropagation();
+                const card = editBtn.closest('[data-account-id]');
+                if (!card) return;
+                openAccountOptionsModal(card);
+                return;
+            }
         });
 
         async function deleteAccount(accountId, displayName) {
@@ -2934,16 +3177,19 @@
             const providerLogo = getProviderLogo(provider, cardId);
 
             return `
-                <div class="card-3d" data-provider="${escapeHtml(provider)}" data-card-id="${escapeHtml(cardId)}" data-account-id="${escapeHtml(account.accountId)}" data-display-name="${escapeHtml(displayName)}">
-                    <div class="card-inner rounded-2xl p-5">
+                <div class="card-3d cursor-pointer" data-provider="${escapeHtml(provider)}" data-card-id="${escapeHtml(cardId)}" data-account-id="${escapeHtml(account.accountId)}" data-display-name="${escapeHtml(displayName)}" data-proxy="${escapeHtml(account.proxy || '')}" data-label="${escapeHtml(account.label || '')}">
+                    <div class="card-inner rounded-2xl p-5 hover:border-cyan-500/40 transition-all">
                         <div class="flex items-center justify-between mb-4">
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 flex-wrap">
                                 ${providerLogo}
                                 <div class="text-sm font-bold text-gray-300">${escapeHtml(maskedName)}</div>
+                                ${account.proxy ? `<span class="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-700/60 text-cyan-300" title="Proxy: ${escapeHtml(account.proxy)}">🌐 proxy</span>` : ''}
                             </div>
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-1.5">
+                                <button type="button" data-edit-account="1"
+                                        class="text-gray-500 hover:text-cyan-400 transition-colors text-xs p-1" title="Account settings & proxy">⚙️</button>
                                 <button type="button" data-delete-account="1"
-                                        class="text-gray-600 hover:text-red-500 transition-colors text-xs px-1" data-i18n-title="quota.removeAccountLabel" title="Remove account">✕</button>
+                                        class="text-gray-600 hover:text-red-500 transition-colors text-xs p-1" data-i18n-title="quota.removeAccountLabel" title="Remove account">✕</button>
                             </div>
                         </div>
                         <div class="space-y-4">${barHtml}</div>

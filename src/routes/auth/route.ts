@@ -116,6 +116,9 @@ authRouter.post("/login", async (c) => {
             profileArn?: string
             region?: string
             apiRegion?: string
+            projectId?: string
+            proxy?: string
+            label?: string
         } = {}
         try {
             const text = await c.req.text()

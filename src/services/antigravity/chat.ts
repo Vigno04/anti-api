@@ -129,7 +129,11 @@ function parseDurationString(s: string): number | null {
     return totalMs > 0 ? totalMs : null
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+    url: string,
+    options: RequestInit & { proxy?: string },
+    timeoutMs: number
+): Promise<Response> {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     const requestSignal = options.signal
@@ -142,7 +146,11 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
         }
     }
     try {
-        return await fetch(url, { ...options, signal: controller.signal })
+        const fetchInit: any = { ...options, signal: controller.signal }
+        if (options.proxy) {
+            fetchInit.proxy = options.proxy
+        }
+        return await fetch(url, fetchInit)
     } finally {
         clearTimeout(timeoutId)
         requestSignal?.removeEventListener("abort", abortFromRequest)
@@ -776,6 +784,8 @@ async function sendRequestSse(
         // 锁已在 handler.ts HTTP 层获取，这里不需要
         for (const baseUrl of ANTIGRAVITY_BASE_URLS) {
             const url = baseUrl + endpoint + "?alt=sse"
+            const currentAccount = currentAccountId ? accountManager.getAccount(currentAccountId) : undefined
+            const accountProxy = currentAccount?.proxy
             try {
                 const response = await fetchWithTimeout(url, {
                     method: "POST",
@@ -786,6 +796,7 @@ async function sendRequestSse(
                         "Accept": "text/event-stream",
                     },
                     body: JSON.stringify(antigravityRequest),
+                    proxy: accountProxy,
                 }, FETCH_TIMEOUT_MS)
 
                 if (response.ok) {
@@ -1034,6 +1045,9 @@ async function* sendRequestSseStreaming(
                 else signal.addEventListener("abort", abortListener, { once: true })
             }
 
+            const currentAccount = currentAccountId ? accountManager.getAccount(currentAccountId) : undefined
+            const accountProxy = currentAccount?.proxy
+
             try {
                 const response = await fetchWithTimeout(url, {
                     method: "POST",
@@ -1045,6 +1059,7 @@ async function* sendRequestSseStreaming(
                     },
                     body: JSON.stringify(antigravityRequest),
                     signal: idleController.signal,
+                    proxy: accountProxy,
                 }, FETCH_TIMEOUT_MS)
 
                 if (!response.ok) {

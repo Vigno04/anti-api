@@ -147,6 +147,8 @@ export interface Account {
     refreshToken: string
     expiresAt: number
     projectId: string | null
+    proxy?: string
+    label?: string
     // 限流状态
     rateLimitedUntil: number | null
     consecutiveFailures: number
@@ -191,6 +193,8 @@ class AccountManager {
                 refreshToken: stored.refreshToken || "",
                 expiresAt: stored.expiresAt || 0,
                 projectId: stored.projectId || null,
+                proxy: stored.proxy || undefined,
+                label: stored.label || undefined,
                 rateLimitedUntil: null,
                 consecutiveFailures: 0,
             })
@@ -209,6 +213,8 @@ class AccountManager {
                     for (const acc of data.accounts) {
                         this.accounts.set(acc.id, {
                             ...acc,
+                            proxy: acc.proxy || undefined,
+                            label: acc.label || undefined,
                             rateLimitedUntil: null,
                             consecutiveFailures: 0,
                         })
@@ -220,7 +226,8 @@ class AccountManager {
                             refreshToken: acc.refreshToken,
                             expiresAt: acc.expiresAt,
                             projectId: acc.projectId || undefined,
-                            label: acc.email,
+                            proxy: acc.proxy || undefined,
+                            label: acc.label || acc.email,
                         })
                     }
                 }
@@ -266,6 +273,8 @@ class AccountManager {
                 refreshToken: acc.refreshToken,
                 expiresAt: acc.expiresAt,
                 projectId: acc.projectId,
+                proxy: acc.proxy,
+                label: acc.label,
             }))
             writePrivateFile(this.dataFile, JSON.stringify({ accounts }, null, 2))
         } catch (e) {
@@ -295,7 +304,8 @@ class AccountManager {
             refreshToken: account.refreshToken,
             expiresAt: account.expiresAt,
             projectId: account.projectId || undefined,
-            label: account.email,
+            proxy: account.proxy || undefined,
+            label: account.label || account.email,
         })
     }
 
@@ -354,6 +364,42 @@ class AccountManager {
     hasAccount(accountId: string): boolean {
         this.ensureLoaded()
         return this.accounts.has(accountId)
+    }
+
+    /**
+     * 获取账号详情
+     */
+    getAccount(accountId: string): Account | undefined {
+        this.ensureLoaded()
+        return this.accounts.get(accountId)
+    }
+
+    /**
+     * 更新账号选项（egress proxy, label, projectId）
+     */
+    updateAccountOptions(
+        accountId: string,
+        options: { proxy?: string; label?: string; projectId?: string }
+    ): boolean {
+        this.ensureLoaded()
+        const account = this.accounts.get(accountId)
+        if (!account) return false
+        if (options.proxy !== undefined) account.proxy = options.proxy.trim() || undefined
+        if (options.label !== undefined) account.label = options.label.trim() || undefined
+        if (options.projectId !== undefined) account.projectId = options.projectId.trim() || null
+        this.save()
+        authStore.saveAccount({
+            id: account.id,
+            provider: "antigravity",
+            email: account.email,
+            accessToken: account.accessToken,
+            refreshToken: account.refreshToken,
+            expiresAt: account.expiresAt,
+            projectId: account.projectId || undefined,
+            proxy: account.proxy,
+            label: account.label || account.email,
+        })
+        return true
     }
 
     /**
@@ -621,7 +667,7 @@ class AccountManager {
                 // 刷新 token 如果需要
                 if (firstAccount.expiresAt > 0 && now > firstAccount.expiresAt - 5 * 60 * 1000) {
                     try {
-                        const tokens = await refreshAccessToken(firstAccount.refreshToken)
+                        const tokens = await refreshAccessToken(firstAccount.refreshToken, firstAccount.proxy)
                         firstAccount.accessToken = tokens.accessToken
                         firstAccount.expiresAt = now + tokens.expiresIn * 1000
                         this.save()
@@ -657,13 +703,13 @@ class AccountManager {
             // 检查 token 是否过期，如果过期则刷新
             if (account.expiresAt > 0 && now > account.expiresAt - 5 * 60 * 1000) {
                 try {
-                    const tokens = await refreshAccessToken(account.refreshToken)
+                    const tokens = await refreshAccessToken(account.refreshToken, account.proxy)
                     account.accessToken = tokens.accessToken
                     account.expiresAt = now + tokens.expiresIn * 1000
 
                     // 刷新 projectId
                     if (!account.projectId) {
-                        account.projectId = await getProjectID(account.accessToken)
+                        account.projectId = await getProjectID(account.accessToken, account.proxy)
                     }
 
                     this.save()
@@ -675,7 +721,8 @@ class AccountManager {
                         refreshToken: account.refreshToken,
                         expiresAt: account.expiresAt,
                         projectId: account.projectId || undefined,
-                        label: account.email,
+                        proxy: account.proxy || undefined,
+                        label: account.label || account.email,
                     })
                 } catch (e) {
                     consola.warn(`Failed to refresh token for ${account.email}:`, safeErrorMessage(e))
@@ -753,12 +800,12 @@ class AccountManager {
 
         if (account.expiresAt > 0 && now > account.expiresAt - 5 * 60 * 1000) {
             try {
-                const tokens = await refreshAccessToken(account.refreshToken)
+                const tokens = await refreshAccessToken(account.refreshToken, account.proxy)
                 account.accessToken = tokens.accessToken
                 account.expiresAt = now + tokens.expiresIn * 1000
 
                 if (!account.projectId) {
-                    account.projectId = await getProjectID(account.accessToken)
+                    account.projectId = await getProjectID(account.accessToken, account.proxy)
                 }
                 this.save()
                 authStore.saveAccount({
@@ -769,7 +816,8 @@ class AccountManager {
                     refreshToken: account.refreshToken,
                     expiresAt: account.expiresAt,
                     projectId: account.projectId || undefined,
-                    label: account.email,
+                    proxy: account.proxy || undefined,
+                    label: account.label || account.email,
                 })
             } catch (e) {
                 consola.warn(`Failed to refresh token for ${account.email}:`, safeErrorMessage(e))
@@ -888,7 +936,7 @@ class AccountManager {
             return account.projectId
         }
 
-        let resolved = await getProjectID(account.accessToken)
+        let resolved = await getProjectID(account.accessToken, account.proxy)
         if (!resolved) {
             resolved = generateMockProjectId()
             consola.warn(`Account ${account.email} missing project_id, using fallback ${resolved}`)
@@ -904,7 +952,8 @@ class AccountManager {
             refreshToken: account.refreshToken,
             expiresAt: account.expiresAt,
             projectId: account.projectId || undefined,
-            label: account.email,
+            proxy: account.proxy || undefined,
+            label: account.label || account.email,
         })
         return resolved
     }

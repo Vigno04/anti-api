@@ -578,6 +578,147 @@ server.delete("/accounts/:id", async (c) => {
     return c.json({ success: false, error: "Account not found" }, 404)
 })
 
+// 获取账号选项 (Egress Proxy, Label, Project ID)
+server.get("/accounts/:id/options", (c) => {
+    const accountId = c.req.param("id")
+    const providerParam = c.req.query("provider") as AuthProvider | undefined
+
+    // 优先检查 antigravity
+    const agAcc = accountManager.getAccount(accountId)
+    if (agAcc) {
+        return c.json({
+            success: true,
+            account: {
+                id: agAcc.id,
+                provider: "antigravity",
+                email: agAcc.email,
+                displayName: agAcc.label || agAcc.email,
+                label: agAcc.label || "",
+                proxy: agAcc.proxy || "",
+                projectId: agAcc.projectId || "",
+            }
+        })
+    }
+
+    // 检查 authStore
+    const providersToTry = providerParam ? [providerParam] : PROVIDERS
+    for (const prov of providersToTry) {
+        const acc = authStore.getAccount(prov, accountId)
+        if (acc) {
+            return c.json({
+                success: true,
+                account: {
+                    id: acc.id,
+                    provider: prov,
+                    email: acc.email,
+                    login: acc.login,
+                    displayName: acc.label || acc.email || acc.login || acc.id,
+                    label: acc.label || "",
+                    proxy: acc.proxy || "",
+                    projectId: acc.projectId || "",
+                }
+            })
+        }
+    }
+
+    return c.json({ success: false, error: "Account not found" }, 404)
+})
+
+// 更新账号选项 (Egress Proxy, Label, Project ID)
+const handleUpdateAccountOptions = async (c: any) => {
+    const accountId = c.req.param("id")
+    let body: { proxy?: string; label?: string; projectId?: string; provider?: string } = {}
+    try {
+        body = await c.req.json()
+    } catch {
+        body = {}
+    }
+
+    const { proxy, label, projectId, provider } = body
+    let updated = false
+    let targetProvider = provider as AuthProvider | undefined
+
+    if (!targetProvider || targetProvider === "antigravity") {
+        if (accountManager.hasAccount(accountId)) {
+            updated = accountManager.updateAccountOptions(accountId, { proxy, label, projectId })
+            targetProvider = "antigravity"
+        }
+    }
+
+    if (!updated || targetProvider) {
+        const providersToTry = targetProvider ? [targetProvider] : PROVIDERS
+        for (const prov of providersToTry) {
+            const res = authStore.updateAccountOptions(prov, accountId, { proxy, label, projectId })
+            if (res) {
+                updated = true
+                targetProvider = prov
+                break
+            }
+        }
+    }
+
+    if (!updated) {
+        return c.json({ success: false, error: `Account not found: ${accountId}` }, 404)
+    }
+
+    return c.json({
+        success: true,
+        accountId,
+        provider: targetProvider,
+        proxy: proxy !== undefined ? (proxy.trim() || null) : undefined,
+        label: label !== undefined ? (label.trim() || null) : undefined,
+        projectId: projectId !== undefined ? (projectId.trim() || null) : undefined,
+    })
+}
+
+server.patch("/accounts/:id/options", handleUpdateAccountOptions)
+server.post("/accounts/:id/options", handleUpdateAccountOptions)
+
+// 测试 Egress Proxy 连通性
+server.post("/accounts/test-proxy", async (c) => {
+    let body: { proxy?: string } = {}
+    try {
+        body = await c.req.json()
+    } catch {
+        body = {}
+    }
+
+    const proxy = (body.proxy || "").trim()
+    if (!proxy) {
+        return c.json({ success: false, error: "Proxy URL is required" }, 400)
+    }
+
+    try {
+        const startTime = Date.now()
+        // 测试请求外网 ip 查询 API
+        const fetchInit: any = {
+            headers: { "User-Agent": "anti-api/1.0" },
+            signal: AbortSignal.timeout(10_000),
+            proxy,
+        }
+        const res = await fetch("https://api.ipify.org?format=json", fetchInit)
+        const latencyMs = Date.now() - startTime
+        if (res.ok) {
+            const data = await res.json().catch(() => ({})) as { ip?: string }
+            return c.json({
+                success: true,
+                latencyMs,
+                exitIp: data.ip || "unknown",
+                message: `Proxy connected successfully (${latencyMs}ms, Exit IP: ${data.ip || "OK"})`
+            })
+        }
+        return c.json({
+            success: false,
+            error: `Proxy returned HTTP ${res.status} ${res.statusText}`
+        }, 400)
+    } catch (e: any) {
+        return c.json({
+            success: false,
+            error: e.message || "Failed to connect through proxy"
+        }, 400)
+    }
+})
+
 // 隧道状态 - 返回公共 URL
 server.get("/tunnel/status", (c) => {
     const { state } = require("./lib/state")

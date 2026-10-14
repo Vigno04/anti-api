@@ -28,6 +28,8 @@ export type AccountQuotaView = {
     accountId: string
     displayName: string
     bars: AccountBar[]
+    proxy?: string
+    label?: string
 }
 
 type QuotaCacheEntry = {
@@ -36,6 +38,8 @@ type QuotaCacheEntry = {
     displayName: string
     bars: AccountBar[]
     updatedAt: string
+    proxy?: string
+    label?: string
 }
 
 const QUOTA_CACHE_DIR = getDataDir()
@@ -132,7 +136,7 @@ function defaultKiroBars(): AccountBar[] {
 
 function buildCachedViews(provider: QuotaCacheEntry["provider"], accounts: ProviderAccount[]): AccountQuotaView[] {
     return accounts.map(account => {
-        const displayName = account.email || account.login || account.id
+        const displayName = account.label || account.email || account.login || account.id
         const cachedBars = getCachedBars(provider, account.id)
         const bars = cachedBars || (
             provider === "antigravity"
@@ -150,6 +154,8 @@ function buildCachedViews(provider: QuotaCacheEntry["provider"], accounts: Provi
             accountId: account.id,
             displayName,
             bars,
+            proxy: account.proxy,
+            label: account.label,
         }
     })
 }
@@ -218,18 +224,23 @@ async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<Acco
                 const refreshed = await refreshAntigravityToken(account)
                 const quotaModels = await fetchAntigravityModelsForAccount(refreshed)
                 const bars = buildAntigravityBars(quotaModels)
+                const displayName = account.label || account.email || account.id
                 updateQuotaCache({
                     provider: "antigravity",
                     accountId: account.id,
-                    displayName: account.email || account.id,
+                    displayName,
                     bars,
                     updatedAt: new Date().toISOString(),
+                    proxy: account.proxy,
+                    label: account.label,
                 })
                 return {
                     provider: "antigravity" as const,
                     accountId: account.id,
-                    displayName: account.email || account.id,
+                    displayName,
                     bars,
+                    proxy: account.proxy,
+                    label: account.label,
                 }
             } catch (error) {
                 lastError = error as Error
@@ -246,19 +257,24 @@ async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<Acco
             }
         }
         const cachedBars = getCachedBars("antigravity", account.id)
+        const displayName = account.label || account.email || account.id
         if (cachedBars) {
             return {
                 provider: "antigravity" as const,
                 accountId: account.id,
-                displayName: account.email || account.id,
+                displayName,
                 bars: cachedBars,
+                proxy: account.proxy,
+                label: account.label,
             }
         }
         return {
             provider: "antigravity" as const,
             accountId: account.id,
-            displayName: account.email || account.id,
+            displayName,
             bars: buildAntigravityBars({}),
+            proxy: account.proxy,
+            label: account.label,
         }
     })
 
@@ -274,7 +290,7 @@ async function refreshAntigravityToken(account: ProviderAccount): Promise<Provid
     }
 
     try {
-        const refreshed = await refreshAccessToken(account.refreshToken)
+        const refreshed = await refreshAccessToken(account.refreshToken, account.proxy)
         const updated = {
             ...account,
             accessToken: refreshed.accessToken,
@@ -300,7 +316,7 @@ async function fetchAntigravityModelsForAccount(
     hasRefreshed = false
 ): Promise<Record<string, ModelInfo>> {
     try {
-        const result = await fetchAntigravityModelsRequest(account.accessToken, account.projectId)
+        const result = await fetchAntigravityModelsRequest(account.accessToken, account.projectId, account.proxy)
         if (!account.projectId && result.projectId) {
             account.projectId = result.projectId
             authStore.saveAccount(account)
@@ -309,7 +325,7 @@ async function fetchAntigravityModelsForAccount(
     } catch (error) {
         if (error instanceof UpstreamError && error.status === 401 && account.refreshToken && !hasRefreshed) {
             try {
-                const refreshed = await refreshAccessToken(account.refreshToken)
+                const refreshed = await refreshAccessToken(account.refreshToken, account.proxy)
                 account.accessToken = refreshed.accessToken
                 account.expiresAt = Date.now() + refreshed.expiresIn * 1000
                 authStore.saveAccount(account)

@@ -228,7 +228,7 @@ export async function fetchUserInfo(accessToken: string): Promise<{ email: strin
 /**
  * 获取 Antigravity Project ID
  */
-export async function getProjectID(accessToken: string): Promise<string | null> {
+export async function getProjectID(accessToken: string, proxy?: string): Promise<string | null> {
     try {
         const response = await fetchJson(OAUTH_CONFIG.projectUrl, {
             method: "POST",
@@ -242,6 +242,7 @@ export async function getProjectID(accessToken: string): Promise<string | null> 
                     ideType: "ANTIGRAVITY",
                 },
             }),
+            proxy,
         })
 
         if (response.status < 200 || response.status >= 300) {
@@ -258,7 +259,7 @@ export async function getProjectID(accessToken: string): Promise<string | null> 
 /**
  * 刷新 access token
  */
-export async function refreshAccessToken(refreshToken: string): Promise<{
+export async function refreshAccessToken(refreshToken: string, proxy?: string): Promise<{
     accessToken: string
     expiresIn: number
 }> {
@@ -275,6 +276,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
             "Content-Type": "application/x-www-form-urlencoded",
         },
         body: params.toString(),
+        proxy,
     })
 
     if (response.status < 200 || response.status >= 300) {
@@ -333,14 +335,18 @@ type InsecureResponse = {
 
 export async function fetchJson(
     url: string,
-    options: { method?: string; headers?: Record<string, string>; body?: string }
+    options: { method?: string; headers?: Record<string, string>; body?: string; proxy?: string }
 ): Promise<{ status: number; data: any; text: string }> {
-    const response = await fetch(url, {
+    const fetchInit: any = {
         method: options.method,
         headers: { "User-Agent": "anti-api", ...(options.headers || {}) },
         body: options.body,
         signal: AbortSignal.timeout(10_000),
-    })
+    }
+    if (options.proxy) {
+        fetchInit.proxy = options.proxy
+    }
+    const response = await fetch(url, fetchInit)
     const text = await response.text()
     let data: any = null
     if (text) {

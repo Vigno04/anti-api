@@ -15,6 +15,7 @@ interface StoredAuthFile {
     email?: string
     login?: string
     label?: string
+    proxy?: string
     auth_source?: string
     access_token: string
     refresh_token?: string
@@ -82,6 +83,7 @@ function toSummary(account: ProviderAccount): ProviderAccountSummary {
         email: account.email,
         login: account.login,
         label: account.label,
+        proxy: account.proxy,
         expiresAt: account.expiresAt,
     }
 }
@@ -100,6 +102,7 @@ function loadAccountFromFile(path: string): ProviderAccount | null {
             email: raw.email,
             login: raw.login,
             label: raw.label,
+            proxy: raw.proxy,
             accessToken: raw.access_token,
             refreshToken: raw.refresh_token,
             expiresAt: raw.expires_at,
@@ -130,6 +133,7 @@ function writeAccountFile(account: ProviderAccount): void {
         email: account.email,
         login: account.login,
         label: account.label,
+        proxy: account.proxy,
         auth_source: account.authSource,
         access_token: account.accessToken,
         refresh_token: account.refreshToken,
@@ -198,6 +202,20 @@ export const authStore = {
     saveAccount(account: ProviderAccount): void {
         writeAccountFile(account)
         invalidateAccountCache()
+    },
+
+    updateAccountOptions(
+        provider: AuthProvider,
+        id: string,
+        options: { proxy?: string; label?: string; projectId?: string }
+    ): ProviderAccount | null {
+        const account = this.getAccount(provider, id)
+        if (!account) return null
+        if (options.proxy !== undefined) account.proxy = options.proxy.trim() || undefined
+        if (options.label !== undefined) account.label = options.label.trim() || undefined
+        if (options.projectId !== undefined) account.projectId = options.projectId.trim() || undefined
+        this.saveAccount(account)
+        return account
     },
 
     deleteAccount(provider: AuthProvider, id: string): boolean {
