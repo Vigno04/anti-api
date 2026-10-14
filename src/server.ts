@@ -390,20 +390,48 @@ server.get("/api/models-catalog", (c: any) => {
         owned_by: "routing",
     }))
 
+    const quotaSnapshot = await getAggregatedQuota().catch(() => null)
+    const antigravityExhaustedModels = new Set<string>()
+    if (quotaSnapshot?.accounts) {
+        for (const acc of quotaSnapshot.accounts) {
+            if (acc.provider === "antigravity" && acc.bars) {
+                for (const bar of acc.bars) {
+                    if (bar.percentage <= 0) {
+                        if (bar.key === "claude_gpt") {
+                            antigravityExhaustedModels.add("claude-opus-5-5")
+                            antigravityExhaustedModels.add("claude-sonnet-5-5")
+                            antigravityExhaustedModels.add("gpt-oss-120b")
+                        } else if (bar.key === "gpro") {
+                            antigravityExhaustedModels.add("gemini-3.1-pro")
+                            antigravityExhaustedModels.add("gemini-pro")
+                        } else if (bar.key === "gflash") {
+                            antigravityExhaustedModels.add("gemini-3.8-flash")
+                            antigravityExhaustedModels.add("gemini-3.5-flash-lite")
+                            antigravityExhaustedModels.add("gemini-flash")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     const seenAll = new Set<string>()
     const allAvailable = [...allBase, ...allProviders, ...allRoutes].filter(m => {
         if (seenAll.has(m.id)) return false
         seenAll.add(m.id)
         return true
     }).map(m => {
+        const isProviderActive = m.owned_by === "routing" || activeProviderSet.has(m.owned_by as AuthProvider)
+        const isQuotaExhausted = m.owned_by === "antigravity" && antigravityExhaustedModels.has(m.id)
+        const isAvailable = isProviderActive && !isQuotaExhausted
         const isLegacy = m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)
         const isThinking = m.id.endsWith("-high") || m.id.endsWith("-low") || m.id.endsWith("-medium") || m.id.endsWith("-thinking")
-        const isProviderActive = m.owned_by === "routing" || activeProviderSet.has(m.owned_by as AuthProvider)
         return {
             ...m,
             isLegacy,
             isThinking,
             isProviderActive,
+            isAvailable,
         }
     })
 

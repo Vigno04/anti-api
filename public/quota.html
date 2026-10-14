@@ -1292,6 +1292,7 @@
                 'api.statusHidden': 'Hidden',
                 'api.badgeLatest': 'Latest',
                 'api.badgeLegacy': 'Legacy',
+                'api.badgeUnavailable': 'Unavailable',
                 'api.badgeThinking': 'Thinking',
                 'api.badgeBase': 'Base',
                 'api.filterStats': '{exposed} of {total} models exposed on /v1/models',
@@ -1492,6 +1493,7 @@
                 'api.statusHidden': '已隐藏',
                 'api.badgeLatest': '最新',
                 'api.badgeLegacy': '旧版',
+                'api.badgeUnavailable': '不可用',
                 'api.badgeThinking': 'Thinking',
                 'api.badgeBase': '基础',
                 'api.filterStats': '已在 /v1/models 暴露 {exposed} / {total} 个模型',
@@ -1692,6 +1694,7 @@
                 'api.statusHidden': 'Nascosto',
                 'api.badgeLatest': 'Recente',
                 'api.badgeLegacy': 'Legacy',
+                'api.badgeUnavailable': 'Non disponibile',
                 'api.badgeThinking': 'Thinking',
                 'api.badgeBase': 'Base',
                 'api.filterStats': '{exposed} di {total} modelli esposti su /v1/models',
@@ -2511,7 +2514,9 @@
                 }`;
 
                 let catBadge = '';
-                if (m.isLegacy) {
+                if (m.isAvailable === false) {
+                    catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium">${t('api.badgeUnavailable')}</span>`;
+                } else if (m.isLegacy) {
                     catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">${t('api.badgeLegacy')}</span>`;
                 } else if (m.isThinking) {
                     catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">${t('api.badgeThinking')}</span>`;

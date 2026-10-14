@@ -43,9 +43,9 @@ const FAMILIES: ModelFamily[] = [
 
 // Which native variant a base/family alias resolves to (first one that exists wins).
 const VARIANT_PREFERENCE: Record<ModelFamily, string[]> = {
-    "claude-opus": ["thinking", ""],
-    "claude-sonnet": ["", "thinking"],
-    "gemini-pro": ["high", "", "low"],
+    "claude-opus": ["thinking", "high", "medium", "low", ""],
+    "claude-sonnet": ["", "medium", "high", "low", "thinking"],
+    "gemini-pro": ["high", "agent", "", "low"],
     "gemini-flash": ["medium", "", "high", "low"],
     "gemini-flash-lite": ["", "low"],
     "gpt-oss": ["medium", "", "high", "low"],
@@ -67,7 +67,18 @@ function compareVersions(a: number[], b: number[]): number {
 export function parseModelId(id: string): ParsedModel | null {
     const lower = id.trim().toLowerCase()
 
-    let m = lower.match(/^claude-(opus|sonnet)-(\d{1,2}(?:[-.]\d{1,2})?)(?:-(thinking))?$/)
+    // Gemini Pro aliases
+    if (lower === "gemini-pro-agent") {
+        return {
+            id,
+            family: "gemini-pro",
+            version: [3, 1], // maps to Gemini 3.1 Pro High/Agent tier
+            variant: "agent",
+        }
+    }
+
+    // Claude (Opus / Sonnet), supporting -high, -medium, -low, -thinking
+    let m = lower.match(/^claude-(opus|sonnet)-(\d{1,2}(?:[-.]\d{1,2})?)(?:-(thinking|high|medium|low))?$/)
     if (m) {
         return {
             id,
@@ -77,6 +88,7 @@ export function parseModelId(id: string): ParsedModel | null {
         }
     }
 
+    // Gemini (Flash, Flash Lite, Pro)
     m = lower.match(/^gemini-(\d{1,2}(?:\.\d{1,2})?)-(flash-lite|flash|pro)(?:-(high|medium|low|thinking))?$/)
     if (m) {
         return {
@@ -87,6 +99,18 @@ export function parseModelId(id: string): ParsedModel | null {
         }
     }
 
+    // Gemini 4 Pro / Flash / etc. if formatted like gemini-4-pro or gemini-4-flash
+    m = lower.match(/^gemini-(\d{1,2})-(flash-lite|flash|pro)(?:-(high|medium|low|thinking))?$/)
+    if (m) {
+        return {
+            id,
+            family: `gemini-${m[2]}` as ModelFamily,
+            version: [parseInt(m[1], 10)],
+            variant: m[3] || "",
+        }
+    }
+
+    // GPT-OSS
     m = lower.match(/^gpt-oss-(\d{1,4})b(?:-(high|medium|low))?$/)
     if (m) {
         return { id, family: "gpt-oss", version: [parseInt(m[1], 10)], variant: m[2] || "" }
@@ -135,7 +159,7 @@ function labelFor(family: ModelFamily, version: number[], variant: string): stri
 }
 
 export interface AntigravityCatalog {
-    /** Clean/unified IDs, e.g. claude-opus-4-6, gemini-3.8-flash */
+    /** Clean/unified IDs, e.g. claude-opus-5-5, gemini-3.8-flash */
     base: CatalogModel[]
     /** Explicit native variants of the latest models (thinking/high/medium/low) */
     variants: CatalogModel[]

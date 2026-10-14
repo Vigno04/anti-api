@@ -22,13 +22,15 @@ test("Gemini 3.1 models stay configured and routable as legacy Antigravity model
 
 test("catalog keeps only the highest version of each family", () => {
     const catalog = buildCatalog([
+        "claude-opus-5-5-high",
+        "claude-opus-5-5-medium",
         "claude-opus-4-6-thinking",
-        "claude-opus-4-7-thinking",
+        "claude-sonnet-5-5-high",
+        "claude-sonnet-5-5-medium",
         "claude-sonnet-4-6",
-        "claude-sonnet-4-5",
+        "gemini-pro-agent",
         "gemini-3.1-pro-high",
         "gemini-3.1-pro-low",
-        "gemini-3.5-pro-high",
         "gemini-3-flash",
         "gemini-3.8-flash-medium",
         "gemini-3.8-flash-high",
@@ -39,17 +41,18 @@ test("catalog keeps only the highest version of each family", () => {
     ])
     const baseIds = catalog.base.map(m => m.id).sort()
     expect(baseIds).toEqual([
-        "claude-opus-4-7",
-        "claude-sonnet-4-6",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "gemini-3.1-pro",
         "gemini-3.5-flash-lite",
-        "gemini-3.5-pro",
         "gemini-3.8-flash",
         "gpt-oss-120b",
     ])
-    expect(catalog.aliases.get("claude-opus-4-7")).toBe("claude-opus-4-7-thinking")
-    expect(catalog.aliases.get("gemini-pro")).toBe("gemini-3.5-pro-high")
+    expect(catalog.aliases.get("claude-opus-5-5")).toBe("claude-opus-5-5-high")
+    expect(catalog.aliases.get("claude-sonnet-5-5")).toBe("claude-sonnet-5-5-medium")
+    expect(catalog.aliases.get("gemini-pro")).toBe("gemini-3.1-pro-high")
     expect(catalog.aliases.get("gemini-flash")).toBe("gemini-3.8-flash-medium")
-    expect(catalog.selectedIds.has("claude-sonnet-4-5")).toBe(false)
+    expect(catalog.selectedIds.has("claude-sonnet-4-6")).toBe(false)
     expect(catalog.selectedIds.has("gemini-3.1-flash-image")).toBe(false)
 })
 
