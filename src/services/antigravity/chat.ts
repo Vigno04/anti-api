@@ -208,6 +208,17 @@ const MODEL_MAPPING: Record<string, string> = {
     "gemini-2.5-pro": "gemini-2.5-pro",
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-flash-thinking": "gemini-2.5-flash-thinking",
+    "gemini-4-argon": "gemini-4-argon",
+    "gemini-4-argon-high": "gemini-4-argon-high",
+    "gemini-4-argon-medium": "gemini-4-argon-medium",
+    "gemini-4-argon-low": "gemini-4-argon-low",
+    "gemini-4-argon-thinking": "gemini-4-argon-thinking",
+    "gemini-argon": "gemini-4-argon",
+    "gemini-argon-high": "gemini-4-argon-high",
+    "gemini-argon-medium": "gemini-4-argon-medium",
+    "gemini-argon-low": "gemini-4-argon-low",
+    "gemini-argon-thinking": "gemini-4-argon-thinking",
+    "argon": "gemini-4-argon",
     "gpt-oss-120b": "gpt-oss-120b-medium",
 }
 
@@ -655,7 +666,11 @@ function buildFunctionCallingConfig(toolChoice?: ChatRequest["toolChoice"], isCl
 
 
 function isGemini31Model(model: string): boolean {
-    return /^gemini-3\./i.test(model) || model === "gemini-pro-agent" || /^gemini-3-/i.test(model)
+    return /^gemini-3\./i.test(model) ||
+           model === "gemini-pro-agent" ||
+           /^gemini-3-/i.test(model) ||
+           /^gemini-4/i.test(model) ||
+           model.includes("argon")
 }
 
 /** Keep generation settings within the limits accepted by each native model family. */

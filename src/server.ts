@@ -394,6 +394,7 @@ server.get("/api/models-catalog", async (c: any) => {
     const antigravityAccounts = (quotaSnapshot?.accounts || []).filter(a => a.provider === "antigravity")
     let hasClaudeAvailable = true
     let hasGeminiAvailable = true
+    let hasArgonAvailable = true
     if (antigravityAccounts.length > 0) {
         const hasAvailableForBarPrefix = (prefix: string) => {
             return antigravityAccounts.some(acc => {
@@ -403,6 +404,7 @@ server.get("/api/models-catalog", async (c: any) => {
         }
         hasClaudeAvailable = hasAvailableForBarPrefix("claude_gpt")
         hasGeminiAvailable = hasAvailableForBarPrefix("gemini")
+        hasArgonAvailable = hasAvailableForBarPrefix("argon")
         if (!hasClaudeAvailable) {
             antigravityExhaustedModels.add("claude-opus-5-5")
             antigravityExhaustedModels.add("claude-sonnet-5-5")
@@ -414,6 +416,11 @@ server.get("/api/models-catalog", async (c: any) => {
             antigravityExhaustedModels.add("gemini-3.8-flash")
             antigravityExhaustedModels.add("gemini-3.5-flash-lite")
             antigravityExhaustedModels.add("gemini-flash")
+        }
+        if (!hasArgonAvailable) {
+            antigravityExhaustedModels.add("gemini-4-argon")
+            antigravityExhaustedModels.add("gemini-argon")
+            antigravityExhaustedModels.add("argon")
         }
     }
 
@@ -427,7 +434,8 @@ server.get("/api/models-catalog", async (c: any) => {
         const isQuotaExhausted = m.owned_by === "antigravity" && (
             antigravityExhaustedModels.has(m.id) ||
             (!hasClaudeAvailable && (m.id.includes("claude") || m.id.includes("gpt-oss"))) ||
-            (!hasGeminiAvailable && m.id.includes("gemini"))
+            (!hasArgonAvailable && m.id.includes("argon")) ||
+            (!hasGeminiAvailable && m.id.includes("gemini") && !m.id.includes("argon"))
         )
         const isAvailable = isProviderActive && !isQuotaExhausted
         const isLegacy = m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)

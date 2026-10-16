@@ -248,6 +248,11 @@
             box-shadow: 0 0 14px rgba(71, 150, 227, 0.6);
         }
 
+        .argon-bar {
+            background: linear-gradient(90deg, #818cf8, #c084fc);
+            box-shadow: 0 0 14px rgba(192, 132, 252, 0.6);
+        }
+
         .codex-bar {
             background: linear-gradient(90deg, #e6e6e6, #bdbdbd);
             box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
@@ -3224,21 +3229,23 @@
             let bars = account.bars || [];
             const cardId = `${provider}-${account.accountId}`;
 
-            // Compact layout: for Antigravity, show only 2 bars (lowest of gemini + lowest of claude_gpt)
+            // Compact layout: for Antigravity, show up to 3 bars (lowest of gemini, lowest of claude_gpt, lowest of argon)
             if (window._compactLayout && provider === 'antigravity' && bars.length >= 2) {
-                const geminiBars = bars.filter(b => b.key.startsWith('gemini'));
+                const geminiBars = bars.filter(b => b.key.startsWith('gemini') && !b.key.includes('argon'));
                 const claudeBars = bars.filter(b => b.key.startsWith('claude_gpt'));
+                const argonBars = bars.filter(b => b.key.includes('argon'));
                 const minBar = (arr, label) => {
                     if (arr.length === 0) return null;
                     const lowest = arr.reduce((min, b) => (b.percentage || 0) < (min.percentage || 0) ? b : min, arr[0]);
                     return { ...lowest, label };
                 };
-                bars = [minBar(geminiBars, 'gemini'), minBar(claudeBars, 'claude&gpt')].filter(Boolean);
+                bars = [minBar(geminiBars, 'gemini'), minBar(claudeBars, 'claude&gpt'), minBar(argonBars, 'argon')].filter(Boolean);
             }
 
             const barHtml = bars.map(bar => {
                     const percentage = Math.max(0, Math.min(100, Math.round(bar.percentage || 0)));
                     const zedSupported = provider === 'zed' && percentage > 0;
+                    const barClass = bar.key.includes('argon') ? 'argon-bar' : `${provider}-bar`;
                     return `
                         <div class="space-y-1">
                             <div class="flex items-center justify-between text-xs text-gray-400">
@@ -3246,7 +3253,7 @@
                                 <span class="font-bold text-gray-400">${provider === 'zed' ? (zedSupported ? 'supported' : 'unsupported') : `${percentage}%`}</span>
                             </div>
                             <div class="h-2 bg-gray-900 rounded-full overflow-hidden">
-                                <div class="progress-bar h-full rounded-full transition-all ${provider}-bar"
+                                <div class="progress-bar h-full rounded-full transition-all ${barClass}"
                                      style="width: ${percentage}%;"></div>
                             </div>
                             <div class="text-[10px] text-gray-500">${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</div>
@@ -3310,7 +3317,10 @@
                 const metricInfo = (acc) => {
                     if (provider === 'antigravity') {
                         const info = getQuotaBarInfo(acc, 'claude_gpt_week', 'weekly claude gpt');
-                        return (info && (info.percent !== 0 || info.resetTime)) ? info : getQuotaBarInfo(acc, 'gemini_5h', '5hr gemini');
+                        if (info && (info.percent !== 0 || info.resetTime)) return info;
+                        const argonInfo = getQuotaBarInfo(acc, 'argon_week', 'weekly argon');
+                        if (argonInfo && (argonInfo.percent !== 0 || argonInfo.resetTime)) return argonInfo;
+                        return getQuotaBarInfo(acc, 'gemini_5h', '5hr gemini');
                     }
                     if (provider === 'codex') return getQuotaBarInfo(acc, 'session', '5h');
                     if (provider === 'copilot') return getQuotaBarInfo(acc, 'premium', 'premium');
@@ -4007,6 +4017,9 @@
             }
             if (m.includes('claude') || m.includes('opus') || m.includes('sonnet')) {
                 return getCssColor('--copilot-red', '#f85149');
+            }
+            if (m.includes('argon')) {
+                return '#a78bfa';
             }
             if (m.includes('gemini') || m.includes('flash') || m.includes('pro')) {
                 return getCssColor('--anti-purple', '#6b4da3');

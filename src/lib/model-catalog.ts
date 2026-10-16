@@ -15,6 +15,7 @@ import { BASE_OFFICIAL_MODELS, THINKING_VARIANT_MODELS } from "./config"
 export type ModelFamily =
     | "claude-opus"
     | "claude-sonnet"
+    | "gemini-argon"
     | "gemini-pro"
     | "gemini-flash"
     | "gemini-flash-lite"
@@ -35,6 +36,7 @@ interface ParsedModel {
 const FAMILIES: ModelFamily[] = [
     "claude-opus",
     "claude-sonnet",
+    "gemini-argon",
     "gemini-pro",
     "gemini-flash",
     "gemini-flash-lite",
@@ -45,6 +47,7 @@ const FAMILIES: ModelFamily[] = [
 const VARIANT_PREFERENCE: Record<ModelFamily, string[]> = {
     "claude-opus": ["thinking", "high", "medium", "low", ""],
     "claude-sonnet": ["", "medium", "high", "low", "thinking"],
+    "gemini-argon": ["high", "thinking", "medium", "", "low"],
     "gemini-pro": ["high", "agent", "", "low"],
     "gemini-flash": ["medium", "", "high", "low"],
     "gemini-flash-lite": ["", "low"],
@@ -67,6 +70,25 @@ function compareVersions(a: number[], b: number[]): number {
 export function parseModelId(id: string): ParsedModel | null {
     const lower = id.trim().toLowerCase()
 
+    // Gemini Argon (e.g. gemini-4-argon, gemini-argon, argon)
+    let m = lower.match(/^gemini-(?:(\d{1,2}(?:\.\d{1,2})?)-)?argon(?:-(high|medium|low|thinking))?$/)
+    if (m) {
+        return {
+            id,
+            family: "gemini-argon",
+            version: m[1] ? toVersion(m[1]) : [4],
+            variant: m[2] || "",
+        }
+    }
+    if (lower === "argon") {
+        return {
+            id,
+            family: "gemini-argon",
+            version: [4],
+            variant: "",
+        }
+    }
+
     // Gemini Pro aliases
     if (lower === "gemini-pro-agent") {
         return {
@@ -78,7 +100,7 @@ export function parseModelId(id: string): ParsedModel | null {
     }
 
     // Claude (Opus / Sonnet), supporting -high, -medium, -low, -thinking
-    let m = lower.match(/^claude-(opus|sonnet)-(\d{1,2}(?:[-.]\d{1,2})?)(?:-(thinking|high|medium|low))?$/)
+    m = lower.match(/^claude-(opus|sonnet)-(\d{1,2}(?:[-.]\d{1,2})?)(?:-(thinking|high|medium|low))?$/)
     if (m) {
         return {
             id,
@@ -126,6 +148,8 @@ function baseIdFor(family: ModelFamily, version: number[]): string {
             return `${family}-${version.join("-")}`
         case "gpt-oss":
             return `gpt-oss-${version[0]}b`
+        case "gemini-argon":
+            return `gemini-${version.join(".")}-argon`
         default: {
             const [, kind] = family.split(/-(.+)/)
             return `gemini-${version.join(".")}-${kind}`
@@ -206,6 +230,9 @@ export function buildCatalog(ids: string[]): AntigravityCatalog {
         selectedIds.add(baseId)
         aliases.set(baseId, target.id)
         aliases.set(family, target.id) // stable alias, e.g. "claude-opus"
+        if (family === "gemini-argon") {
+            aliases.set("argon", target.id)
+        }
 
         for (const member of current) {
             selectedIds.add(member.id)

@@ -394,8 +394,12 @@ export function buildAntigravityBars(
 
         const geminiGroup = groups.find(g => {
             const name = (g.displayName || "").toLowerCase()
-            return name.includes("gemini")
-        }) || groups.find(g => (g.buckets || []).some(b => b.bucketId.toLowerCase().includes("gemini")))
+            return name.includes("gemini") && !name.includes("argon")
+        }) || groups.find(g => (g.buckets || []).some(b => {
+            const id = b.bucketId.toLowerCase()
+            const d = (b.displayName || "").toLowerCase()
+            return (id.includes("gemini") || d.includes("gemini")) && !id.includes("argon") && !d.includes("argon")
+        }))
 
         const claudeGroup = groups.find(g => {
             const name = (g.displayName || "").toLowerCase()
@@ -405,19 +409,54 @@ export function buildAntigravityBars(
             return id.includes("3p") || id.includes("claude") || id.includes("gpt")
         }))
 
-        const getBucket = (group: AntigravityQuotaGroup | undefined, isWeekly: boolean) => {
-            if (!group?.buckets) return undefined
-            return group.buckets.find(b => {
+        const argonGroup = groups.find(g => {
+            const name = (g.displayName || "").toLowerCase()
+            return name.includes("argon")
+        }) || groups.find(g => (g.buckets || []).some(b => {
+            const id = b.bucketId.toLowerCase()
+            const d = (b.displayName || "").toLowerCase()
+            return id.includes("argon") || d.includes("argon")
+        }))
+
+        const allBuckets = groups.flatMap(g => g.buckets || [])
+
+        const getBucket = (group: AntigravityQuotaGroup | undefined, isWeekly: boolean, filterArgon = false) => {
+            const buckets = group?.buckets || []
+            return buckets.find(b => {
                 const w = (b.window || "").toLowerCase()
                 const id = b.bucketId.toLowerCase()
+                const d = (b.displayName || "").toLowerCase()
+                if (filterArgon && (id.includes("argon") || d.includes("argon"))) return false
                 return isWeekly ? (w === "weekly" || id.includes("week")) : (w === "5h" || id.includes("5h"))
             })
         }
 
-        const gWeekly = getBucket(geminiGroup, true)
-        const g5h = getBucket(geminiGroup, false)
+        const isArgonBucket = (b: AntigravityQuotaBucket) => {
+            const id = (b.bucketId || "").toLowerCase()
+            const d = (b.displayName || "").toLowerCase()
+            return id.includes("argon") || d.includes("argon")
+        }
+
+        const getArgonBucket = (isWeekly: boolean) => {
+            const isDedicatedArgonGroup = Boolean(argonGroup && (argonGroup.displayName || "").toLowerCase().includes("argon"))
+            const candidateBuckets = isDedicatedArgonGroup
+                ? (argonGroup?.buckets || [])
+                : allBuckets.filter(isArgonBucket)
+
+            return candidateBuckets.find(b => {
+                if (!isDedicatedArgonGroup && !isArgonBucket(b)) return false
+                const w = (b.window || "").toLowerCase()
+                const id = b.bucketId.toLowerCase()
+                return isWeekly ? (w === "weekly" || id.includes("week") || !id.includes("5h")) : (w === "5h" || id.includes("5h"))
+            })
+        }
+
+        const gWeekly = getBucket(geminiGroup, true, true)
+        const g5h = getBucket(geminiGroup, false, true)
         const cWeekly = getBucket(claudeGroup, true)
         const c5h = getBucket(claudeGroup, false)
+        const aWeekly = getArgonBucket(true)
+        const a5h = getArgonBucket(false)
 
         const toBar = (key: string, label: string, bucket?: AntigravityQuotaBucket, defaultPct = 100): AccountBar => {
             if (!bucket) {
@@ -434,14 +473,33 @@ export function buildAntigravityBars(
             }
         }
 
-        return [
+        const result: AccountBar[] = [
             toBar("gemini_week", "weekly gemini", gWeekly, 100),
             toBar("gemini_5h", "5hr gemini", g5h, 100),
             toBar("claude_gpt_week", "weekly claude gpt", cWeekly, 0),
             toBar("claude_gpt_5h", "5hr claude gpt", c5h, 0),
+            toBar("argon_week", "weekly argon", aWeekly, 0),
         ]
+
+        if (a5h) {
+            result.push(toBar("argon_5h", "5hr argon", a5h, 0))
+        }
+
+        return result
     }
 
+    const argonIds = [
+        "gemini-4-argon",
+        "gemini-4-argon-high",
+        "gemini-4-argon-medium",
+        "gemini-4-argon-low",
+        "gemini-4-argon-thinking",
+        "gemini-argon",
+        "gemini-argon-high",
+        "gemini-argon-medium",
+        "gemini-argon-low",
+        "gemini-argon-thinking",
+    ]
     const claudeGptIds = [
         "claude-opus-5-5",
         "claude-opus-5-5-high",
@@ -493,10 +551,12 @@ export function buildAntigravityBars(
 
     const geminiRaw = buildMergedBar("gemini", "gemini", models, geminiIds)
     const claudeGptRaw = buildMergedBar("claude_gpt", "claude_gpt", models, claudeGptIds)
+    const argonRaw = buildMergedBar("argon", "argon", models, argonIds)
 
     const now = Date.now()
     const isGeminiWeekly = geminiRaw.resetTime ? (Date.parse(geminiRaw.resetTime) - now > 12 * 3600 * 1000) : false
     const isClaudeWeekly = claudeGptRaw.resetTime ? (Date.parse(claudeGptRaw.resetTime) - now > 12 * 3600 * 1000) : true
+    const hasArgonModels = argonIds.some(id => Boolean(models[id]))
 
     const geminiWeekly: AccountBar = {
         key: "gemini_week",
@@ -522,12 +582,19 @@ export function buildAntigravityBars(
         percentage: !isClaudeWeekly ? claudeGptRaw.percentage : (claudeGptRaw.percentage <= 0 ? 0 : 100),
         resetTime: !isClaudeWeekly ? claudeGptRaw.resetTime : undefined,
     }
+    const argonWeekly: AccountBar = {
+        key: "argon_week",
+        label: "weekly argon",
+        percentage: hasArgonModels ? argonRaw.percentage : 0,
+        resetTime: hasArgonModels ? argonRaw.resetTime : undefined,
+    }
 
     return [
         geminiWeekly,
         gemini5h,
         claudeGptWeekly,
         claudeGpt5h,
+        argonWeekly,
     ]
 }
 

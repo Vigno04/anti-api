@@ -590,8 +590,9 @@
         const PROVIDER_ORDER = ['antigravity', 'codex', 'copilot', 'zed', 'kiro'];
         const MODEL_GROUPS = {
             claudeGpt: ['claude-opus-5-5', 'claude-opus-5-5-thinking', 'claude-sonnet-5-5', 'claude-sonnet-5-5-thinking', 'claude-opus-4-6-thinking', 'claude-sonnet-4-6', 'claude-opus-4-5-thinking', 'claude-sonnet-4-5', 'claude-sonnet-4-5-thinking', 'gpt-oss-120b'],
-            gpro: ['gemini-3-pro-low', 'gemini-3-pro-high'],
-            gflash: ['gemini-3-flash'],
+            argon: ['gemini-4-argon', 'gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low', 'gemini-4-argon-thinking', 'gemini-argon', 'gemini-argon-high', 'gemini-argon-medium', 'gemini-argon-low', 'gemini-argon-thinking', 'argon'],
+            gpro: ['gemini-3-pro-low', 'gemini-3-pro-high', 'gemini-3.1-pro', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low'],
+            gflash: ['gemini-3.8-flash', 'gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gemini-3-flash'],
         };
 
         const dom = {
@@ -1330,11 +1331,14 @@
 
             if (!accountData || !accountData.bars) return null;
 
-            if (MODEL_GROUPS.claudeGpt.includes(modelId) || modelId.includes('claude') || modelId.includes('gpt-oss')) {
+            if (MODEL_GROUPS.argon.includes(modelId) || modelId.includes('argon')) {
+                const aBars = accountData.bars.filter(b => b.key.includes('argon'));
+                if (aBars.length > 0) return Math.min(...aBars.map(b => b.percentage));
+            } else if (MODEL_GROUPS.claudeGpt.includes(modelId) || modelId.includes('claude') || modelId.includes('gpt-oss')) {
                 const cBars = accountData.bars.filter(b => b.key.startsWith('claude_gpt'));
                 if (cBars.length > 0) return Math.min(...cBars.map(b => b.percentage));
             } else if (modelId.includes('gemini') || MODEL_GROUPS.gpro.includes(modelId) || MODEL_GROUPS.gflash.includes(modelId)) {
-                const gBars = accountData.bars.filter(b => b.key.startsWith('gemini'));
+                const gBars = accountData.bars.filter(b => b.key.startsWith('gemini') && !b.key.includes('argon'));
                 if (gBars.length > 0) return Math.min(...gBars.map(b => b.percentage));
             }
 

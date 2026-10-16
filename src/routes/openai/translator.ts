@@ -24,6 +24,12 @@ export function mapModel(openaiModel: string, reasoningEffort?: "low" | "medium"
     const raw = MODEL_MAPPING[openaiModel] || openaiModel
     const norm = raw.trim().toLowerCase().replace(/[._]/g, "-")
 
+    if (norm === "gemini-4-argon" || norm === "gemini-argon" || norm === "argon") {
+        if (reasoningEffort === "low") return "gemini-4-argon-low"
+        if (reasoningEffort === "high") return "gemini-4-argon-high"
+        return "gemini-4-argon"
+    }
+
     if (norm === "gemini-3-8-flash" || norm === "gemini-3-8-flash-preview") {
         if (reasoningEffort === "low") return "gemini-3.8-flash-low"
         if (reasoningEffort === "high") return "gemini-3.8-flash-high"

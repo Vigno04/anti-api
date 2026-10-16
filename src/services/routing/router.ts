@@ -85,6 +85,9 @@ export function normalizeOfficialModelId(model: string): string {
         "gemini-3-pro": "gemini-3-pro-high",
         "gemini-2.5-pro": "gemini-2.5-pro",
         "gemini-2.5-flash": "gemini-2.5-flash",
+        "gemini-4-argon": "gemini-4-argon",
+        "gemini-argon": "gemini-4-argon",
+        "argon": "gemini-4-argon",
     }
     return map[lookupKey] || normalized
 

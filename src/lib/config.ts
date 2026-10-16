@@ -12,6 +12,7 @@ export const BASE_OFFICIAL_MODELS = [
     { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
     { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { id: "gemini-4-argon", name: "Gemini 4 Argon" },
     { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
     { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
     { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite" },
@@ -29,6 +30,8 @@ export const BASE_OFFICIAL_MODELS = [
 export const THINKING_VARIANT_MODELS = [
     { id: "claude-opus-5-5-thinking", name: "Claude Opus 5.5 (Thinking)" },
     { id: "claude-sonnet-5-5-thinking", name: "Claude Sonnet 5.5 (Thinking)" },
+    { id: "gemini-4-argon-high", name: "Gemini 4 Argon (High)" },
+    { id: "gemini-4-argon-thinking", name: "Gemini 4 Argon (Thinking)" },
     { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
     { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)" },
     { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)" },
