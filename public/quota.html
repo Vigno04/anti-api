@@ -395,12 +395,6 @@
                                 <span data-i18n="diagnostics.button">Diagnostics</span>
                             </button>
                         </div>
-                        <div class="refresh-btn inline-block">
-                            <button onclick="openIdeLogoutModal()" id="ide-logout-btn"
-                                class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm">
-                                <span data-i18n="quota.logIdeOut">Log IDE Out</span>
-                            </button>
-                        </div>
                         <div class="refresh-btn inline-block" id="add-account-container">
                             <button onclick="openAddAccountModal()" id="add-account-btn"
                                 class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm">
@@ -416,6 +410,20 @@
                     </div>
                     <p id="last-updated" class="text-gray-600 text-xs text-right"></p>
                 </div>
+            </div>
+
+            <!-- Antigravity Reauth Banner -->
+            <div id="antigravity-reauth-banner" class="hidden mb-6 rounded-xl border border-yellow-700/60 bg-yellow-950/25 p-4 text-yellow-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+                <div class="flex items-center gap-3">
+                    <span class="text-2xl flex-shrink-0">⚠️</span>
+                    <div>
+                        <div class="font-bold text-sm text-yellow-100">Accesso Antigravity Richiesto</div>
+                        <div class="text-xs text-yellow-300/80 mt-0.5">È necessario collegare il tuo account Google con il nuovo metodo basato su codice per abilitare Gemini 4 Argon e tutti i modelli attivi su Docker e server remoti.</div>
+                    </div>
+                </div>
+                <button onclick="startAntigravityCodeLogin()" class="px-4 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-400 text-black font-bold text-xs transition-colors shrink-0 shadow-md">
+                    Accedi con Google
+                </button>
             </div>
 
             <!-- Quota Grid -->
@@ -1111,6 +1119,38 @@
                 </div>
                 <a id="copilot-link" href="#" target="_blank"
                     class="inline-block mt-3 text-blue-400 hover:text-blue-300 text-xs" data-i18n="quota.openVerificationPage">Open verification page</a>
+            </div>
+            <div id="antigravity-device" class="mt-4 hidden p-4 rounded-xl border border-cyan-800/60 bg-cyan-950/20 space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="text-sm font-semibold text-cyan-300">Accesso Google Antigravity</div>
+                    <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-200 border border-cyan-700/50">Docker / Remote</span>
+                </div>
+                <div class="text-xs text-gray-300">
+                    <strong>1.</strong> Clicca sul pulsante sottostante per autorizzare l'accesso Google:
+                </div>
+                <div>
+                    <a id="antigravity-auth-link" href="#" target="_blank"
+                        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-black font-semibold text-xs shadow-md transition-colors">
+                        <span>Apri pagina di accesso Google</span>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                    </a>
+                </div>
+                <div class="text-xs text-gray-400">
+                    Dopo l'accesso, Google mostrerà il <strong>codice di autorizzazione</strong> (oppure copia l'URL della pagina aperta).
+                </div>
+                <div class="space-y-1.5 pt-1">
+                    <label class="block text-xs font-semibold text-gray-300"><strong>2.</strong> Incolla qui il codice (o l'URL):</label>
+                    <div class="flex gap-2">
+                        <input id="antigravity-code-input" type="text" placeholder="es. 4/0Abc... oppure https://antigravity.google/oauth-callback?code=..."
+                            class="flex-1 bg-[#16161a] border border-[#2f253f] focus:border-cyan-500 focus:outline-none rounded-xl px-3.5 py-2 text-xs text-gray-100 font-mono placeholder-gray-600 transition-colors" />
+                        <button id="antigravity-submit-btn" onclick="submitAntigravityCode()"
+                            class="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-black font-semibold text-xs transition-colors shrink-0 flex items-center gap-1.5">
+                            <span id="antigravity-submit-spinner" class="hidden">🔄</span>
+                            <span>Verifica e Accedi</span>
+                        </button>
+                    </div>
+                    <p id="antigravity-code-error" class="text-[11px] text-red-400 hidden mt-1"></p>
+                </div>
             </div>
         </div>
     </div>
@@ -3487,19 +3527,31 @@
                 const data = await response.json();
 
                 const logoutContainer = document.getElementById('logout-container');
+                const reauthBanner = document.getElementById('antigravity-reauth-banner');
 
-                if (data.authenticated) {
+                if (data.authenticated && !data.requiresReauth) {
                     if (logoutContainer) {
                         logoutContainer.style.display = 'block';
+                    }
+                    if (reauthBanner) {
+                        reauthBanner.classList.add('hidden');
                     }
                 } else {
                     if (logoutContainer) {
                         logoutContainer.style.display = 'none';
                     }
+                    if (reauthBanner) {
+                        reauthBanner.classList.remove('hidden');
+                    }
                 }
             } catch (error) {
                 console.error('Failed to check auth status:', error);
             }
+        }
+
+        function startAntigravityCodeLogin() {
+            openAddAccountModal();
+            startProviderLogin('antigravity');
         }
 
         function hideLoadingOnce() {
@@ -3516,11 +3568,15 @@
             document.getElementById('add-account-status').classList.add('hidden');
             document.getElementById('codex-device').classList.add('hidden');
             document.getElementById('copilot-device').classList.add('hidden');
+            const agyDev = document.getElementById('antigravity-device');
+            if (agyDev) agyDev.classList.add('hidden');
         }
 
         function closeAddAccountModal() {
             document.getElementById('add-account-modal').classList.add('hidden');
             document.getElementById('add-account-modal').classList.remove('flex');
+            const agyDev = document.getElementById('antigravity-device');
+            if (agyDev) agyDev.classList.add('hidden');
         }
 
         function setAddAccountStatus(message) {
@@ -3568,6 +3624,75 @@
             await pollCodexStatus(stored.sessionId);
         }
 
+        function showAntigravityCodeFlow(data) {
+            const device = document.getElementById('antigravity-device');
+            const linkEl = document.getElementById('antigravity-auth-link');
+            const inputEl = document.getElementById('antigravity-code-input');
+            const errEl = document.getElementById('antigravity-code-error');
+            if (!device) return;
+            device.classList.remove('hidden');
+            if (errEl) {
+                errEl.classList.add('hidden');
+                errEl.textContent = '';
+            }
+            if (inputEl) inputEl.value = '';
+            if (linkEl && data.auth_url) {
+                linkEl.href = data.auth_url;
+                window.open(data.auth_url, '_blank');
+            }
+            setAddAccountStatus('Autorizza l\'accesso con Google nel browser, poi incolla il codice ricevuto.');
+            if (inputEl) setTimeout(() => inputEl.focus(), 300);
+        }
+
+        async function submitAntigravityCode() {
+            const inputEl = document.getElementById('antigravity-code-input');
+            const errEl = document.getElementById('antigravity-code-error');
+            const spinner = document.getElementById('antigravity-submit-spinner');
+            const btn = document.getElementById('antigravity-submit-btn');
+            const code = (inputEl ? inputEl.value : '').trim();
+            if (!code) {
+                if (errEl) {
+                    errEl.textContent = 'Inserisci il codice di autorizzazione o l\'URL ricevuto da Google.';
+                    errEl.classList.remove('hidden');
+                }
+                return;
+            }
+            if (errEl) errEl.classList.add('hidden');
+            if (btn) btn.disabled = true;
+            if (spinner) spinner.classList.remove('hidden');
+            setAddAccountStatus('Verifica codice e collegamento in corso...');
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider: 'antigravity', code: code })
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    if (errEl) {
+                        errEl.textContent = data.error || 'Autenticazione fallita. Verifica il codice e riprova.';
+                        errEl.classList.remove('hidden');
+                    }
+                    setAddAccountStatus(data.error || 'Autenticazione fallita.');
+                    return;
+                }
+                setAddAccountStatus(t('quota.connected', { name: data.email || 'Antigravity' }));
+                closeAddAccountModal();
+                await checkAuthStatus();
+                refreshAll(true);
+            } catch (err) {
+                if (errEl) {
+                    errEl.textContent = err.message || 'Errore di rete.';
+                    errEl.classList.remove('hidden');
+                }
+                setAddAccountStatus('Errore durante il collegamento.');
+            } finally {
+                if (btn) btn.disabled = false;
+                if (spinner) spinner.classList.add('hidden');
+            }
+        }
+
         async function startProviderLogin(provider) {
             setAddAccountStatus(t('quota.authStarting'));
 
@@ -3589,6 +3714,18 @@
 
                 if (!data.success) {
                     setAddAccountStatus(data.error || t('quota.authFailed'));
+                    return;
+                }
+
+                if (provider === 'antigravity') {
+                    if (data.status === 'pending' && data.auth_url) {
+                        showAntigravityCodeFlow(data);
+                        return;
+                    }
+                    setAddAccountStatus(t('quota.connected', { name: data.email || 'Antigravity' }));
+                    closeAddAccountModal();
+                    await checkAuthStatus();
+                    refreshAll(true);
                     return;
                 }
 

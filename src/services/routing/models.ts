@@ -183,7 +183,7 @@ function getCatalogAntigravityModels(separateThinking: boolean): ProviderModelOp
 
 /** Every known Antigravity model (latest + legacy + discovered), for dashboards. */
 export function getAllAntigravityModels(): ProviderModelOption[] {
-    const staticModels = getAvailableModels({ separateThinking: true }).map(model => ({
+    const staticModels = getAvailableModels({ separateThinking: true, includeLegacy: true }).map(model => ({
         id: model.id,
         label: model.name,
     }))

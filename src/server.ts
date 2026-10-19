@@ -22,6 +22,7 @@ import { loadRoutingConfig, isSeparateThinkingModelsEnabled } from "./services/r
 import { getProviderModels } from "./services/routing/models"
 import { importCodexAuthSources } from "./services/codex/oauth"
 import { importGrokAuthSources } from "./services/grok/oauth"
+import { importAgyAuthSources } from "./services/antigravity/agy-auth"
 import { loadSettings, saveSettings } from "./services/settings"
 import { pingAccount } from "./services/ping"
 import { summarizeUpstreamError, UpstreamError } from "./lib/error"
@@ -86,24 +87,74 @@ server.get("/oauth-callback", async (c) => {
     const state = c.req.query("state")
     const error = c.req.query("error")
 
+    if (error) {
+        return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Error</title></head>
+        <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+          <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+            <h2 style="color:#ef4444;margin-top:0;">Accesso non riuscito</h2>
+            <p>${error}</p>
+            <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
+          </div>
+        </body></html>`)
+    }
+
     const handled = dispatchOAuthCallback(code, state, error)
     if (handled) {
         return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Success</title></head>
         <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
           <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
-            <h2 style="color:#22c55e;margin-top:0;">✅ Authentication Success</h2>
-            <p>Your OAuth account has been connected to Anti-API.</p>
-            <p style="font-size:0.875rem;color:#a1a1aa;">Redirecting to dashboard in 2 seconds...</p>
-            <script>setTimeout(() => { window.location.href = '/quota'; }, 2000);</script>
+            <h2 style="color:#22c55e;margin-top:0;">✅ Accesso completato</h2>
+            <p>Account OAuth connesso ad Anti-API.</p>
+            <p style="font-size:0.875rem;color:#a1a1aa;">Reindirizzamento alla dashboard...</p>
+            <script>setTimeout(() => { window.location.href = '/quota'; }, 1500);</script>
           </div>
         </body></html>`)
     }
+
+    if (code) {
+        try {
+            const { loginWithAuthCode } = await import("./services/antigravity/login")
+            const host = c.req.header("host")
+            const redirectUri = host ? `http://${host}/oauth-callback` : undefined
+            const result = await loginWithAuthCode(code, redirectUri)
+            if (result.success) {
+                return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Success</title></head>
+                <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                  <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+                    <h2 style="color:#22c55e;margin-top:0;">✅ Accesso completato</h2>
+                    <p>Account Google <strong>${result.email || ""}</strong> connesso con successo ad Anti-API.</p>
+                    <p style="font-size:0.875rem;color:#a1a1aa;">Reindirizzamento alla dashboard...</p>
+                    <script>setTimeout(() => { window.location.href = '/quota'; }, 1500);</script>
+                  </div>
+                </body></html>`)
+            } else {
+                return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Error</title></head>
+                <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                  <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
+                    <h2 style="color:#ef4444;margin-top:0;">Errore di accesso</h2>
+                    <p>${result.error || "Scambio del codice non riuscito."}</p>
+                    <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
+                  </div>
+                </body></html>`)
+            }
+        } catch (err: any) {
+            return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Error</title></head>
+            <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+              <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
+                <h2 style="color:#ef4444;margin-top:0;">Errore di accesso</h2>
+                <p>${err.message || "Errore sconosciuto"}</p>
+                <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
+              </div>
+            </body></html>`)
+        }
+    }
+
     return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Callback</title></head>
     <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
       <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
-        <h2 style="color:#eab308;margin-top:0;">Callback Received</h2>
-        <p>No active login waiting or session already completed.</p>
-        <a href="/quota" style="color:#38bdf8;text-decoration:none;">Go to Dashboard</a>
+        <h2 style="color:#eab308;margin-top:0;">Callback Ricevuto</h2>
+        <p>Nessun codice fornito o sessione già completata.</p>
+        <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
       </div>
     </body></html>`)
 })
@@ -172,7 +223,9 @@ server.use(async (c, next) => {
 
 // 启动时自动加载已保存的认证
 initAuth()
-accountManager.load()
+if (typeof accountManager?.load === "function") {
+    accountManager.load()
+}
 
 // Optional startup imports are explicit because they read and copy credentials from other tools.
 if (process.env.ANTI_API_IMPORT_CODEX_ON_START === "1") {
@@ -187,6 +240,14 @@ if (process.env.ANTI_API_IMPORT_GROK_ON_START === "1") {
     importGrokAuthSources().then(result => {
         if (result.accounts.length > 0) {
             consola.success(`Grok: Imported ${result.accounts.length} account(s) from ${result.sources.join(", ")}`)
+        }
+    }).catch(() => undefined)
+}
+
+if ((accountManager?.getAllAccounts?.()?.length ?? 0) === 0 || process.env.ANTI_API_IMPORT_AGY_ON_START === "1") {
+    importAgyAuthSources().then(result => {
+        if (result.success && result.imported) {
+            consola.success(`Antigravity: Imported credentials from agy (${result.email})`)
         }
     }).catch(() => undefined)
 }

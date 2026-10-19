@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono"
-import { isAuthenticated, getUserInfo, setAuth, clearAuth, startOAuthLogin } from "~/services/antigravity/login"
+import { isAuthenticated, getUserInfo, setAuth, clearAuth, getAntigravityLoginUrl, loginWithAuthCode } from "~/services/antigravity/login"
 import { accountManager } from "~/services/antigravity/account-manager"
 import { state } from "~/lib/state"
 import { authStore } from "~/services/auth/store"
@@ -15,16 +15,21 @@ import { importKiroAuthSources } from "~/services/kiro/oauth"
 import { runAccountDiagnostics } from "~/services/auth/diagnostics"
 import { isLoopbackHost } from "~/lib/local-request"
 import { safeErrorMessage } from "~/lib/redaction"
+import { importAgyAuthSources, exchangeAuthCode, getAgyAuthStatus } from "~/services/antigravity/agy-auth"
 
 export const authRouter = new Hono()
 
 // 获取认证状态
 authRouter.get("/status", (c) => {
     const userInfo = getUserInfo()
+    accountManager.load()
+    const antigravityAccounts = authStore.listAccounts("antigravity")
+    const isAuthed = isAuthenticated() && antigravityAccounts.length > 0
     return c.json({
-        authenticated: isAuthenticated(),
-        email: userInfo.email,
-        name: userInfo.name,
+        authenticated: isAuthed,
+        email: userInfo.email || (antigravityAccounts[0]?.email ?? null),
+        name: userInfo.name || null,
+        requiresReauth: !isAuthed,
     })
 })
 
@@ -107,6 +112,8 @@ authRouter.post("/login", async (c) => {
         let body: {
             accessToken?: string
             refreshToken?: string
+            code?: string
+            redirectUri?: string
             email?: string
             name?: string
             provider?: string
@@ -263,29 +270,30 @@ authRouter.post("/login", async (c) => {
         }
 
         // 默认 Antigravity
-        if (!body.accessToken) {
-            const result = await startOAuthLogin()
-            if (result.success) {
-                accountManager.load()
-                if (state.accessToken && state.refreshToken) {
-                    accountManager.addAccount({
-                        id: state.userEmail || `account-${Date.now()}`,
-                        email: state.userEmail || "unknown",
-                        accessToken: state.accessToken,
-                        refreshToken: state.refreshToken,
-                        expiresAt: state.tokenExpiresAt || 0,
-                        projectId: state.cloudaicompanionProject,
-                    })
-                }
+        if (body.code) {
+            const exchangeResult = await loginWithAuthCode(body.code, (body as any).redirectUri)
+            if (exchangeResult.success) {
                 return c.json({
                     success: true,
                     authenticated: true,
                     provider: "antigravity",
-                    email: result.email,
+                    status: "success",
+                    email: exchangeResult.email,
                 })
             } else {
-                return c.json({ success: false, error: result.error }, 400)
+                return c.json({ success: false, error: exchangeResult.error }, 400)
             }
+        }
+
+        if (!body.accessToken) {
+            // Base flow for Docker & remote server: return Google OAuth authorization link
+            return c.json({
+                success: true,
+                status: "pending",
+                provider: "antigravity",
+                auth_url: getAntigravityLoginUrl(),
+                instructions: "Open auth_url in your browser, sign in with Google, and copy the authorization code to complete login.",
+            })
         }
 
         const email = body.email || (body as any).userEmail
@@ -381,8 +389,17 @@ authRouter.post("/logout", (c) => {
 
 // ====== IDE 登出 ======
 
-// 查看 IDE 当前登录状态
-authRouter.get("/ide/status", (c) => {
+// 查看 IDE / agy 当前登录状态
+authRouter.get("/ide/status", async (c) => {
+    const agyStatus = await getAgyAuthStatus()
+    if (agyStatus.loggedIn) {
+        return c.json({
+            loggedIn: true,
+            email: agyStatus.email,
+            name: agyStatus.email?.split("@")[0] || null,
+            source: "agy",
+        })
+    }
     const status = getIdeAuthStatus()
     return c.json(status)
 })
@@ -404,3 +421,14 @@ authRouter.post("/ide/logout", async (c) => {
         return c.json({ success: false, error: safeErrorMessage(error) }, 500)
     }
 })
+
+// ====== Antigravity CLI (agy) ======
+
+authRouter.get("/agy/status", async (c) => {
+    return c.json(await getAgyAuthStatus())
+})
+
+authRouter.post("/agy/import", async (c) => {
+    return c.json(await importAgyAuthSources())
+})
+

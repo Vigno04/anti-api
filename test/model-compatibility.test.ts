@@ -69,9 +69,8 @@ test("getProviderModels antigravity respects includeAllVariants flag", () => {
 
     expect(baseIds).toContain("claude-opus-5-5")
     expect(baseIds).toContain("claude-sonnet-5-5")
-    expect(baseIds).toContain("gemini-3.1-pro")
+    expect(baseIds).toContain("gemini-4-argon")
     expect(baseIds).toContain("gemini-3.8-flash")
-    expect(baseIds).toContain("gemini-3.5-flash-lite")
     expect(baseIds).toContain("gpt-oss-120b")
 
     for (const id of baseIds) {

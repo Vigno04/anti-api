@@ -159,12 +159,42 @@ async function fetchWithTimeout(
 }
 
 const MODEL_MAPPING: Record<string, string> = {
+    // Gemini 4 Argon
+    "gemini-4-argon": "gemini-4-argon",
+    "gemini-4-argon-high": "gemini-4-argon-high",
+    "gemini-4-argon-medium": "gemini-4-argon-medium",
+    "gemini-4-argon-low": "gemini-4-argon-low",
+    "gemini-4-argon-thinking": "gemini-4-argon-thinking",
+    "gemini-argon": "gemini-4-argon",
+    "gemini-argon-high": "gemini-4-argon-high",
+    "gemini-argon-medium": "gemini-4-argon-medium",
+    "gemini-argon-low": "gemini-4-argon-low",
+    "gemini-argon-thinking": "gemini-4-argon-thinking",
+    "argon": "gemini-4-argon",
+
+    // Gemini 3.8 Flash
+    "gemini-3.8-flash": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-high": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low": "gemini-3.8-flash-low",
+    "gemini-flash": "gemini-3.8-flash-medium",
+
+    // Claude 5.5
     "claude-opus-5-5": "claude-opus-5-5-thinking",
     "claude-opus-5.5": "claude-opus-5-5-thinking",
     "claude-opus-5-5-thinking": "claude-opus-5-5-thinking",
+    "claude-opus": "claude-opus-5-5-thinking",
     "claude-sonnet-5-5": "claude-sonnet-5-5",
     "claude-sonnet-5.5": "claude-sonnet-5-5",
     "claude-sonnet-5-5-thinking": "claude-sonnet-5-5-thinking",
+    "claude-sonnet": "claude-sonnet-5-5",
+
+    // GPT-OSS
+    "gpt-oss-120b": "gpt-oss-120b-medium",
+    "gpt-oss-120b-medium": "gpt-oss-120b-medium",
+    "gpt-oss": "gpt-oss-120b-medium",
+
+    // Legacy fallbacks (kept for compatibility)
     "claude-opus-4-6": "claude-opus-4-6-thinking",
     "claude-opus-4.6": "claude-opus-4-6-thinking",
     "claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
@@ -176,12 +206,16 @@ const MODEL_MAPPING: Record<string, string> = {
     "claude-sonnet-4-5": "claude-sonnet-4-5",
     "claude-sonnet-4.5": "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
-    "claude-sonnet-4.5-thinking": "claude-sonnet-4-5-thinking",
     "claude-sonnet-4-5-20251001": "claude-sonnet-4-5",
-    "gemini-3.8-flash": "gemini-3.8-flash-medium",
-    "gemini-3.8-flash-high": "gemini-3.8-flash-high",
-    "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
-    "gemini-3.8-flash-low": "gemini-3.8-flash-low",
+    "gemini-3.1-pro": "gemini-pro-agent",
+    "gemini-3.1-pro-preview": "gemini-pro-agent",
+    "gemini-3.1-pro-high": "gemini-pro-agent",
+    "gemini-3.1-pro-low": "gemini-3.1-pro-low",
+    "gemini-3.1-flash": "gemini-3.1-flash",
+    "gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-image": "gemini-3.1-flash-image",
+    "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image-preview",
     "gemini-3.7-flash": "gemini-3.7-flash-medium",
     "gemini-3.7-flash-high": "gemini-3.7-flash-high",
     "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
@@ -195,31 +229,9 @@ const MODEL_MAPPING: Record<string, string> = {
     "gemini-3-pro-high": "gemini-3-pro-high",
     "gemini-3-pro-low": "gemini-3-pro-low",
     "gemini-3-flash": "gemini-3-flash",
-    "gemini-3.1-pro": "gemini-pro-agent",
-    "gemini-3.1-pro-preview": "gemini-pro-agent",
-    // Antigravity exposes the public "Pro (High)" tier as this native ID.
-    "gemini-3.1-pro-high": "gemini-pro-agent",
-    "gemini-3.1-pro-low": "gemini-3.1-pro-low",
-    "gemini-3.1-flash": "gemini-3.1-flash",
-    "gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
-    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-flash-image": "gemini-3.1-flash-image",
-    "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image-preview",
     "gemini-2.5-pro": "gemini-2.5-pro",
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-flash-thinking": "gemini-2.5-flash-thinking",
-    "gemini-4-argon": "gemini-4-argon",
-    "gemini-4-argon-high": "gemini-4-argon-high",
-    "gemini-4-argon-medium": "gemini-4-argon-medium",
-    "gemini-4-argon-low": "gemini-4-argon-low",
-    "gemini-4-argon-thinking": "gemini-4-argon-thinking",
-    "gemini-argon": "gemini-4-argon",
-    "gemini-argon-high": "gemini-4-argon-high",
-    "gemini-argon-medium": "gemini-4-argon-medium",
-    "gemini-argon-low": "gemini-4-argon-low",
-    "gemini-argon-thinking": "gemini-4-argon-thinking",
-    "argon": "gemini-4-argon",
-    "gpt-oss-120b": "gpt-oss-120b-medium",
 }
 
 

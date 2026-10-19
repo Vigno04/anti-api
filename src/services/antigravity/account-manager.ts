@@ -379,6 +379,14 @@ class AccountManager {
     }
 
     /**
+     * 获取所有账号列表
+     */
+    getAllAccounts(): Account[] {
+        this.ensureLoaded()
+        return Array.from(this.accounts.values())
+    }
+
+    /**
      * 更新账号选项（egress proxy, label, projectId）
      */
     updateAccountOptions(
