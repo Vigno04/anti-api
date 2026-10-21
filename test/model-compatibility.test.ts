@@ -81,5 +81,12 @@ test("getProviderModels antigravity respects includeAllVariants flag", () => {
     const allModels = getProviderModels("antigravity", { includeAllVariants: true })
     const allIds = allModels.map(m => m.id)
     expect(allIds.some(id => id.endsWith("-high") || id.endsWith("-thinking"))).toBe(true)
+
+    // Aliases and family shortcuts must never be exposed as distinct models in the catalog/UI
+    const forbiddenAliases = ["gpt-oss", "claude-opus", "claude-sonnet", "gemini-argon", "argon", "gemini-flash"]
+    for (const alias of forbiddenAliases) {
+        expect(baseIds).not.toContain(alias)
+        expect(allIds).not.toContain(alias)
+    }
 })
 

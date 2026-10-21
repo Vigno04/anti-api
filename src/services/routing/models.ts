@@ -1,5 +1,5 @@
 import { AVAILABLE_MODELS, getAvailableModels } from "~/lib/config"
-import { getAntigravityCatalog, setDiscoveredAntigravityModelIds } from "~/lib/model-catalog"
+import { buildCatalog, getAntigravityCatalog, setDiscoveredAntigravityModelIds } from "~/lib/model-catalog"
 import { isSeparateThinkingModelsEnabled, isHiddenCodexModel, CODEX_HIDDEN_MODELS } from "./config"
 import type { AuthProvider } from "~/services/auth/types"
 
@@ -276,8 +276,7 @@ export function getProviderModels(
     options?: { includeAllVariants?: boolean }
 ): ProviderModelOption[] {
     if (provider === "antigravity") {
-        const aliasModels = Array.from(getAntigravityCatalog().aliases.keys()).map(id => ({ id, label: id }))
-        const all = mergeModelOptions(getAllAntigravityModels(), aliasModels)
+        const all = getAllAntigravityModels()
         const separateThinking = options?.includeAllVariants ?? isSeparateThinkingModelsEnabled()
         return separateThinking ? all : all.filter(m => !isVariantModelId(m.id))
     }
@@ -299,14 +298,27 @@ export function getProviderModels(
 }
 
 export function getProviderModelsForAccount(provider: AuthProvider, accountId: string): ProviderModelOption[] {
-    if (provider === "antigravity") {
-        return getProviderModels(provider)
-    }
-
     const spec = PROVIDER_SPECS[provider]
     if (!spec) return []
 
     const dynamic = getStore(provider).byAccount.get(accountId)
+    if (provider === "antigravity") {
+        if (dynamic && dynamic.length > 0) {
+            const dynamicIds = dynamic.map(m => m.id)
+            const accountCatalog = buildCatalog(dynamicIds)
+            const separateThinking = isSeparateThinkingModelsEnabled()
+            const catalogModels = (separateThinking
+                ? [...accountCatalog.base, ...accountCatalog.variants]
+                : accountCatalog.base
+            ).map(m => ({ id: m.id, label: m.name }))
+
+            const knownIds = new Set(catalogModels.map(m => m.id))
+            const leftovers = dynamic.filter(m => !knownIds.has(m.id) && (separateThinking || !isVariantModelId(m.id)))
+            return [...catalogModels, ...leftovers]
+        }
+        return getProviderModels(provider)
+    }
+
     if (dynamic && dynamic.length > 0) {
         return mergeModelOptions(dynamic, spec.getStaticModels())
     }

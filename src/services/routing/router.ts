@@ -25,7 +25,7 @@ import {
     buildMessageDelta,
     buildMessageStop,
 } from "~/lib/translator"
-import { baseModelIdFor } from "~/lib/model-catalog"
+import { baseModelIdFor, getAntigravityCatalog } from "~/lib/model-catalog"
 import { formatSuccessLine, setRequestLogContext } from "~/lib/logger"
 import { recordUsage } from "~/services/usage-tracker"
 
@@ -64,6 +64,13 @@ type ProviderCompletion = {
 
 /** Canonical official model IDs for known aliases (keys are lower-case). */
 const OFFICIAL_MODEL_ALIASES: Record<string, string> = {
+    "gpt-oss": "gpt-oss-120b",
+    "gpt-oss-120b": "gpt-oss-120b",
+    "claude-opus": "claude-opus-5-5-thinking",
+    "claude-sonnet": "claude-sonnet-5-5",
+    "gemini-pro": "gemini-3.1-pro-high",
+    "gemini-flash": "gemini-3.8-flash-medium",
+    "gemini-flash-lite": "gemini-3.8-flash-lite",
     "claude-opus-4-7": "claude-opus-4.7",
     "claude-opus-5-5": "claude-opus-5-5-thinking",
     "claude-opus-5.5": "claude-opus-5-5-thinking",
@@ -104,7 +111,14 @@ export function normalizeOfficialModelId(model: string): string {
     const normalized = model?.trim()
     if (!normalized) return model
     const lookupKey = normalized.toLowerCase()
-    return OFFICIAL_MODEL_ALIASES[lookupKey] || normalized
+    if (OFFICIAL_MODEL_ALIASES[lookupKey]) {
+        return OFFICIAL_MODEL_ALIASES[lookupKey]
+    }
+    const catalogAlias = getAntigravityCatalog().aliases.get(lookupKey)
+    if (catalogAlias) {
+        return catalogAlias
+    }
+    return normalized
 }
 
 /**
@@ -200,7 +214,9 @@ function getOfficialModelProviders(model: string): AuthProvider[] {
 }
 
 function isOfficialModel(model: string): boolean {
-    return getOfficialModelProviders(model).length > 0
+    if (getOfficialModelProviders(model).length > 0) return true
+    const normalized = normalizeOfficialModelId(model)
+    return normalized !== model && getOfficialModelProviders(normalized).length > 0
 }
 
 function normalizeEntries(entries: RoutingEntry[]): RoutingEntry[] {
