@@ -1,10 +1,16 @@
 import { test, expect } from "bun:test"
 import { mapModel, translateMessages, translateTools, mapStopReason } from "../src/routes/openai/translator"
 
-test("mapModel returns mapped model for known GPT models", () => {
-    expect(mapModel("gpt-4")).toBe("claude-sonnet-4-5")
-    expect(mapModel("gpt-4o")).toBe("claude-sonnet-4-5")
-    expect(mapModel("o1")).toBe("claude-sonnet-4-5-thinking")
+test("mapModel preserves standard model names without hijacking them", () => {
+    expect(mapModel("gpt-4")).toBe("gpt-4")
+    expect(mapModel("gpt-4o")).toBe("gpt-4o")
+    expect(mapModel("o1")).toBe("o1")
+})
+
+test("mapModel applies reasoning effort to tiered models", () => {
+    expect(mapModel("gemini-4-argon", "high")).toBe("gemini-4-argon-high")
+    expect(mapModel("gemini-3.8-flash", "low")).toBe("gemini-3.8-flash-low")
+    expect(mapModel("claude-opus-5-5", "high")).toBe("claude-opus-5-5-high")
 })
 
 test("mapModel returns original model for unknown models", () => {

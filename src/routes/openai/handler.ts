@@ -1,3 +1,4 @@
+import { getCacheReadTokens } from "~/lib/translator"
 /**
  * OpenAI /v1/chat/completions 端点处理器
  */
@@ -128,7 +129,7 @@ export async function handleChatCompletion(c: Context): Promise<Response> {
         }
 
         // Token counts for response (Usage recording is handled in chat.ts with actual native model ID)
-        const cacheReadTokens = result.usage?.cacheReadTokens || 0
+        const cacheReadTokens = getCacheReadTokens(result.usage)
         const inputTokens = (result.usage?.inputTokens || 0) + cacheReadTokens
         const outputTokens = result.usage?.outputTokens || 0
 

@@ -174,9 +174,10 @@ test("model catalog parses and aliases Gemini 4 Argon", () => {
 })
 
 test("chat service and router normalize Gemini Argon models correctly", () => {
-    expect(getAntigravityModelName("gemini-4-argon")).toBe("gemini-4-argon")
-    expect(getAntigravityModelName("gemini-argon")).toBe("gemini-4-argon")
-    expect(getAntigravityModelName("argon")).toBe("gemini-4-argon")
+    expect(getAntigravityModelName("gemini-4-argon")).toBe("gemini-4-argon-medium")
+    expect(getAntigravityModelName("gemini-argon")).toBe("gemini-4-argon-medium")
+    expect(getAntigravityModelName("argon")).toBe("gemini-4-argon-medium")
+    expect(getAntigravityModelName("gemini-4-argon-thinking")).toBe("gemini-4-argon-high")
 
     expect(normalizeOfficialModelId("gemini-4-argon")).toBe("gemini-4-argon")
     expect(normalizeOfficialModelId("gemini-argon")).toBe("gemini-4-argon")

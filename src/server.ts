@@ -14,12 +14,12 @@ import { remoteRouter } from "./routes/remote/route"
 import { routingRouter } from "./routes/routing/route"
 import { logsRouter } from "./routes/logs/route"
 import { updatesRouter } from "./routes/updates/route"
-import { isLatestAntigravityModel } from "./lib/model-catalog"
 import { getAggregatedQuota } from "./services/quota-aggregator"
 import { initAuth, isAuthenticated } from "./services/antigravity/login"
 import { accountManager } from "./services/antigravity/account-manager"
-import { loadRoutingConfig, isSeparateThinkingModelsEnabled } from "./services/routing/config"
-import { getProviderModels } from "./services/routing/models"
+import { loadRoutingConfig, saveRoutingConfig, isSeparateThinkingModelsEnabled } from "./services/routing/config"
+import { quotaPoolForModel, type QuotaPool } from "./lib/model-catalog"
+import { getProviderModels, isVariantModelId } from "./services/routing/models"
 import { importCodexAuthSources } from "./services/codex/oauth"
 import { importGrokAuthSources } from "./services/grok/oauth"
 import { importAgyAuthSources } from "./services/antigravity/agy-auth"
@@ -27,7 +27,7 @@ import { loadSettings, saveSettings } from "./services/settings"
 import { pingAccount } from "./services/ping"
 import { summarizeUpstreamError, UpstreamError } from "./lib/error"
 import { authStore } from "./services/auth/store"
-import type { AuthProvider } from "./services/auth/types"
+import { AUTH_PROVIDERS, PROVIDER_DISPLAY_NAMES, type AuthProvider } from "./services/auth/types"
 import { safeErrorMessage } from "./lib/redaction"
 
 import { formatLogTime, getRequestLogContext, runWithRequestContext } from "./lib/logger"
@@ -50,7 +50,7 @@ import { resolveLogLevel } from "./lib/log-level"
 import { dispatchOAuthCallback } from "./services/antigravity/oauth"
 
 export const server = new Hono()
-const PROVIDERS: AuthProvider[] = ["antigravity", "codex", "copilot", "zed", "kiro", "grok"]
+const PROVIDERS = AUTH_PROVIDERS
 
 interface ModelListEntry {
     id: string
@@ -62,24 +62,52 @@ initLogCapture()
 setLogCaptureEnabled(loadSettings().captureLogs)
 consola.level = resolveLogLevel()
 
-// CORS 中间件 - 支持跨域和反向代理
+// CORS is granted only to the inference API. The control plane (auth, settings, logs, ...)
+// is same-origin only so other web pages cannot drive it.
+const CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+    "Access-Control-Allow-Headers": "*",
+}
+const INFERENCE_PATH_PREFIXES = ["/v1/", "/v1beta/", "/messages", "/models", "/embeddings", "/responses"]
+
+function isInferencePath(path: string): boolean {
+    return INFERENCE_PATH_PREFIXES.some(prefix => path === prefix.replace(/\/$/, "") || path.startsWith(prefix))
+}
+
 server.use("*", async (c, next) => {
+    if (!isInferencePath(c.req.path)) return await next()
     if (c.req.method === "OPTIONS") {
-        return new Response(null, {
-            status: 204,
-            headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Max-Age": "86400",
-            },
-        })
+        return new Response(null, { status: 204, headers: { ...CORS_HEADERS, "Access-Control-Max-Age": "86400" } })
     }
     await next()
-    c.res.headers.set("Access-Control-Allow-Origin", "*")
-    c.res.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
-    c.res.headers.set("Access-Control-Allow-Headers", "*")
+    for (const [name, value] of Object.entries(CORS_HEADERS)) c.res.headers.set(name, value)
 })
+type CallbackTone = "success" | "error" | "warning"
+const CALLBACK_TONE_COLORS: Record<CallbackTone, string> = { success: "#22c55e", error: "#ef4444", warning: "#eab308" }
+
+function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!))
+}
+
+/** Renders the small status page shown at the end of an OAuth callback. `bodyHtml` must already be escaped. */
+function renderCallbackPage(opts: { title: string; heading: string; tone: CallbackTone; bodyHtml: string; redirect?: boolean }): string {
+    const footer = opts.redirect
+        ? `<p style="font-size:0.875rem;color:#a1a1aa;">Reindirizzamento alla dashboard...</p>
+            <script>setTimeout(() => { window.location.href = '/quota'; }, 1500);</script>`
+        : `<a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>`
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${opts.title}</title></head>
+<body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+    <h2 style="color:${CALLBACK_TONE_COLORS[opts.tone]};margin-top:0;">${opts.heading}</h2>
+    ${opts.bodyHtml}
+    ${footer}
+  </div>
+</body></html>`
+}
+
+const callbackError = (message: string, heading = "Errore di accesso") =>
+    renderCallbackPage({ title: "Anti-API Auth Error", heading, tone: "error", bodyHtml: `<p>${escapeHtml(message)}</p>` })
 
 // OAuth 回调端点 - 允许通过主端口/反向代理直接接收 OAuth 回调，无需额外暴露回调端口
 server.get("/oauth-callback", async (c) => {
@@ -87,28 +115,16 @@ server.get("/oauth-callback", async (c) => {
     const state = c.req.query("state")
     const error = c.req.query("error")
 
-    if (error) {
-        return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Error</title></head>
-        <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-          <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
-            <h2 style="color:#ef4444;margin-top:0;">Accesso non riuscito</h2>
-            <p>${error}</p>
-            <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
-          </div>
-        </body></html>`)
-    }
+    if (error) return c.html(callbackError(error, "Accesso non riuscito"))
 
-    const handled = dispatchOAuthCallback(code, state, error)
-    if (handled) {
-        return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Success</title></head>
-        <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-          <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
-            <h2 style="color:#22c55e;margin-top:0;">✅ Accesso completato</h2>
-            <p>Account OAuth connesso ad Anti-API.</p>
-            <p style="font-size:0.875rem;color:#a1a1aa;">Reindirizzamento alla dashboard...</p>
-            <script>setTimeout(() => { window.location.href = '/quota'; }, 1500);</script>
-          </div>
-        </body></html>`)
+    if (dispatchOAuthCallback(code, state, error)) {
+        return c.html(renderCallbackPage({
+            title: "Anti-API Auth Success",
+            heading: "✅ Accesso completato",
+            tone: "success",
+            bodyHtml: "<p>Account OAuth connesso ad Anti-API.</p>",
+            redirect: true,
+        }))
     }
 
     if (code) {
@@ -117,48 +133,26 @@ server.get("/oauth-callback", async (c) => {
             const host = c.req.header("host")
             const redirectUri = host ? `http://${host}/oauth-callback` : undefined
             const result = await loginWithAuthCode(code, redirectUri)
-            if (result.success) {
-                return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Success</title></head>
-                <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-                  <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;box-shadow:0 10px 25px rgba(0,0,0,0.5);">
-                    <h2 style="color:#22c55e;margin-top:0;">✅ Accesso completato</h2>
-                    <p>Account Google <strong>${result.email || ""}</strong> connesso con successo ad Anti-API.</p>
-                    <p style="font-size:0.875rem;color:#a1a1aa;">Reindirizzamento alla dashboard...</p>
-                    <script>setTimeout(() => { window.location.href = '/quota'; }, 1500);</script>
-                  </div>
-                </body></html>`)
-            } else {
-                return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Error</title></head>
-                <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-                  <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
-                    <h2 style="color:#ef4444;margin-top:0;">Errore di accesso</h2>
-                    <p>${result.error || "Scambio del codice non riuscito."}</p>
-                    <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
-                  </div>
-                </body></html>`)
-            }
+            if (!result.success) return c.html(callbackError(result.error || "Scambio del codice non riuscito."))
+            return c.html(renderCallbackPage({
+                title: "Anti-API Auth Success",
+                heading: "✅ Accesso completato",
+                tone: "success",
+                bodyHtml: `<p>Account Google <strong>${escapeHtml(result.email || "")}</strong> connesso con successo ad Anti-API.</p>`,
+                redirect: true,
+            }))
         } catch (err: any) {
-            return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Error</title></head>
-            <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-              <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
-                <h2 style="color:#ef4444;margin-top:0;">Errore di accesso</h2>
-                <p>${err.message || "Errore sconosciuto"}</p>
-                <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
-              </div>
-            </body></html>`)
+            return c.html(callbackError(err.message || "Errore sconosciuto"))
         }
     }
 
-    return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Anti-API Auth Callback</title></head>
-    <body style="font-family:system-ui,-apple-system,sans-serif;background:#18181b;color:#f4f4f5;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-      <div style="background:#27272a;padding:2rem;border-radius:12px;text-align:center;max-width:400px;">
-        <h2 style="color:#eab308;margin-top:0;">Callback Ricevuto</h2>
-        <p>Nessun codice fornito o sessione già completata.</p>
-        <a href="/quota" style="color:#38bdf8;text-decoration:none;">Torna alla Dashboard</a>
-      </div>
-    </body></html>`)
+    return c.html(renderCallbackPage({
+        title: "Anti-API Auth Callback",
+        heading: "Callback Ricevuto",
+        tone: "warning",
+        bodyHtml: "<p>Nessun codice fornito o sessione già completata.</p>",
+    }))
 })
-
 // 中间件 - 请求日志 (只记录重要请求)
 server.use(async (c, next) => {
     return await runWithRequestContext(async () => {
@@ -171,17 +165,9 @@ server.use(async (c, next) => {
             const ctx = getRequestLogContext()
             const method = c.req.method
             const path = c.req.path
-            const debugInfo = status === 400 ? ` (${method} ${path}${reason ? ` - ${reason}` : ""})` : ""
+            const debugInfo = ` (${method} ${path}${reason ? ` - ${reason}` : ""})`
             if (ctx.model && ctx.provider) {
-                const providerNames: Record<string, string> = {
-                    copilot: "GitHub Copilot",
-                    codex: "ChatGPT Codex",
-                    antigravity: "Antigravity",
-                    zed: "Zed",
-                    kiro: "Kiro",
-                    grok: "Grok",
-                }
-                const providerName = providerNames[ctx.provider] || ctx.provider
+                const providerName = PROVIDER_DISPLAY_NAMES[ctx.provider as AuthProvider] || ctx.provider
                 const accountPart = ctx.account ? ` >> ${ctx.account}` : ""
                 const routePart = ctx.routeTag ? `•${ctx.routeTag}` : ""
                 console.log(`[${formatLogTime()}] ${status}: from ${ctx.model} > ${providerName}${accountPart}${routePart}${debugInfo}`)
@@ -195,7 +181,8 @@ server.use(async (c, next) => {
 
 server.use(async (c, next) => {
     // Exempt public health checks and OAuth callback
-    if (c.req.path === "/oauth-callback" || c.req.path === "/health") {
+    const isHealthBootstrap = c.req.path === "/health" && isContainerControlPlaneEnabled() && !!extractControlPlaneBootstrapToken(c.req.raw)
+    if (c.req.path === "/oauth-callback" || (c.req.path === "/health" && !isHealthBootstrap)) {
         return await next()
     }
 
@@ -335,9 +322,6 @@ server.route("/v1beta/messages", messageRoutes)
 // 无前缀版本 for GUI tools
 server.route("/messages", messageRoutes)
 
-// Legacy = any Antigravity model that is not the latest of its family (see lib/model-catalog.ts)
-const isLegacyAntigravityId = (id: string): boolean => !isLatestAntigravityModel(id)
-
 function computeModelsCatalog() {
     const settings = loadSettings()
     const routingConfig = loadRoutingConfig()
@@ -359,10 +343,7 @@ function computeModelsCatalog() {
     const separateThinking = settings.separateThinkingModels ?? isSeparateThinkingModelsEnabled()
 
     const providerModels: ModelListEntry[] = targetProviders.flatMap((provider) =>
-        getProviderModels(provider, {
-            includeAllVariants: separateThinking,
-            includeLegacy: !(settings.latestModelsOnly ?? true),
-        }).map(model => ({
+        getProviderModels(provider, { includeAllVariants: separateThinking }).map(model => ({
             id: model.id,
             name: model.label,
             owned_by: provider,
@@ -376,19 +357,9 @@ function computeModelsCatalog() {
         return true
     })
 
-    // Filter: latestModelsOnly (keep flagship per family, drop legacy)
-    if (settings.latestModelsOnly ?? true) {
-        models = models.filter(m => !(m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)))
-    }
-
     // Filter: separateThinkingModels (if false, drop any explicit thinking variants)
     if (!separateThinking) {
-        models = models.filter(m => !(
-            m.id.endsWith("-high") ||
-            m.id.endsWith("-low") ||
-            m.id.endsWith("-medium") ||
-            m.id.endsWith("-thinking")
-        ))
+        models = models.filter(m => !isVariantModelId(m.id))
     }
 
     // Filter: disabledModels
@@ -438,7 +409,7 @@ server.get("/api/models-catalog", async (c: any) => {
 
     // All available models across providers
     const allProviders: ModelListEntry[] = PROVIDERS.flatMap(provider =>
-        getProviderModels(provider, { includeAllVariants: true, includeLegacy: true }).map(model => ({
+        getProviderModels(provider, { includeAllVariants: true }).map(model => ({
             id: model.id,
             name: model.label,
             owned_by: provider,
@@ -451,11 +422,9 @@ server.get("/api/models-catalog", async (c: any) => {
     }))
 
     const quotaSnapshot = await getAggregatedQuota().catch(() => null)
-    const antigravityExhaustedModels = new Set<string>()
+    // Antigravity quota pools with no remaining quota on any account
+    const exhaustedPools = new Set<QuotaPool>()
     const antigravityAccounts = (quotaSnapshot?.accounts || []).filter(a => a.provider === "antigravity")
-    let hasClaudeAvailable = true
-    let hasGeminiAvailable = true
-    let hasArgonAvailable = true
     if (antigravityAccounts.length > 0) {
         const hasAvailableForBarPrefix = (prefix: string) => {
             return antigravityAccounts.some(acc => {
@@ -463,25 +432,8 @@ server.get("/api/models-catalog", async (c: any) => {
                 return bars.length === 0 || bars.every(b => (b.percentage ?? 0) > 0 && !b.disabled)
             })
         }
-        hasClaudeAvailable = hasAvailableForBarPrefix("claude_gpt")
-        hasGeminiAvailable = hasAvailableForBarPrefix("gemini")
-        hasArgonAvailable = hasAvailableForBarPrefix("argon")
-        if (!hasClaudeAvailable) {
-            antigravityExhaustedModels.add("claude-opus-5-5")
-            antigravityExhaustedModels.add("claude-sonnet-5-5")
-            antigravityExhaustedModels.add("gpt-oss-120b")
-        }
-        if (!hasGeminiAvailable) {
-            antigravityExhaustedModels.add("gemini-3.1-pro")
-            antigravityExhaustedModels.add("gemini-pro")
-            antigravityExhaustedModels.add("gemini-3.8-flash")
-            antigravityExhaustedModels.add("gemini-3.5-flash-lite")
-            antigravityExhaustedModels.add("gemini-flash")
-        }
-        if (!hasArgonAvailable) {
-            antigravityExhaustedModels.add("gemini-4-argon")
-            antigravityExhaustedModels.add("gemini-argon")
-            antigravityExhaustedModels.add("argon")
+        for (const pool of ["claude_gpt", "gemini", "argon"] as const) {
+            if (!hasAvailableForBarPrefix(pool)) exhaustedPools.add(pool)
         }
     }
 
@@ -492,18 +444,12 @@ server.get("/api/models-catalog", async (c: any) => {
         return true
     }).map(m => {
         const isProviderActive = m.owned_by === "routing" || activeProviderSet.has(m.owned_by as AuthProvider)
-        const isQuotaExhausted = m.owned_by === "antigravity" && (
-            antigravityExhaustedModels.has(m.id) ||
-            (!hasClaudeAvailable && (m.id.includes("claude") || m.id.includes("gpt-oss"))) ||
-            (!hasArgonAvailable && m.id.includes("argon")) ||
-            (!hasGeminiAvailable && m.id.includes("gemini") && !m.id.includes("argon"))
-        )
+        const pool = m.owned_by === "antigravity" ? quotaPoolForModel(m.id) : null
+        const isQuotaExhausted = pool !== null && exhaustedPools.has(pool)
         const isAvailable = isProviderActive && !isQuotaExhausted
-        const isLegacy = m.owned_by === "antigravity" && isLegacyAntigravityId(m.id)
-        const isThinking = m.id.endsWith("-high") || m.id.endsWith("-low") || m.id.endsWith("-medium") || m.id.endsWith("-thinking")
+        const isThinking = isVariantModelId(m.id)
         return {
             ...m,
-            isLegacy,
             isThinking,
             isProviderActive,
             isAvailable,

@@ -10,81 +10,65 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
-const MODEL_MAPPING: Record<string, string> = {
-    // GPT → Claude 映射 (使用 Antigravity 正确的模型名称)
-    "gpt-4": "claude-sonnet-4-5",
-    "gpt-4o": "claude-sonnet-4-5",
-    "gpt-4-turbo": "claude-sonnet-4-5",
-    "gpt-3.5-turbo": "gemini-2.0-flash-exp",  // 使用 Gemini 作为轻量模型
-    "o1": "claude-sonnet-4-5-thinking",
-    "o1-mini": "gemini-2.0-flash-exp",
+type ReasoningEffort = "low" | "medium" | "high"
+
+/** Picks a model per reasoning effort; `medium`/unset falls back to `fallback`. */
+interface EffortRule {
+    match: string[]
+    low?: string
+    medium?: string
+    high?: string
+    fallback: string
 }
 
-export function mapModel(openaiModel: string, reasoningEffort?: "low" | "medium" | "high"): string {
-    const raw = MODEL_MAPPING[openaiModel] || openaiModel
+function effortRule(match: string[], fallback: string, overrides: Partial<Record<ReasoningEffort, string>> = {}): EffortRule {
+    return { match, fallback, ...overrides }
+}
+
+/** Gemini/Claude family with explicit -low/-high native variants. */
+function tieredRule(match: string[], base: string, medium: string = base): EffortRule {
+    return effortRule(match, medium, { low: `${base}-low`, high: `${base}-high` })
+}
+
+/** Models that switch to a single thinking variant whenever any effort is requested. */
+function thinkingRule(match: string[], plain: string, thinking: string): EffortRule {
+    return effortRule(match, plain, { low: thinking, medium: thinking, high: thinking })
+}
+
+/** Models whose id never changes with reasoning effort. */
+function constantRule(match: string[], id: string): EffortRule {
+    return thinkingRule(match, id, id)
+}
+
+const EFFORT_RULES: EffortRule[] = [
+    tieredRule(["gemini-4-argon", "gemini-argon", "argon"], "gemini-4-argon", "gemini-4-argon"),
+    tieredRule(["gemini-3-8-flash", "gemini-3-8-flash-preview"], "gemini-3.8-flash", "gemini-3.8-flash-medium"),
+    tieredRule(["gemini-3-7-flash"], "gemini-3.7-flash", "gemini-3.7-flash-medium"),
+    tieredRule(["gemini-3-6-flash"], "gemini-3.6-flash", "gemini-3.6-flash-medium"),
+    constantRule(["gemini-3-5-flash-lite"], "gemini-3.5-flash-lite"),
+    effortRule(["gemini-3-1-pro", "gemini-3-1-pro-preview"], "gemini-3.1-pro-high", { low: "gemini-3.1-pro-low" }),
+    effortRule(["gemini-3-pro"], "gemini-3-pro-high", { low: "gemini-3-pro-low" }),
+    thinkingRule(["gemini-2-5-flash"], "gemini-2.5-flash", "gemini-2.5-flash-thinking"),
+    tieredRule(["claude-opus-5-5"], "claude-opus-5-5"),
+    tieredRule(["claude-sonnet-5-5"], "claude-sonnet-5-5"),
+    constantRule(["claude-opus-4-6"], "claude-opus-4-6-thinking"),
+    constantRule(["claude-sonnet-4-6"], "claude-sonnet-4-6"),
+    constantRule(["claude-opus-4-5"], "claude-opus-4-5-thinking"),
+    thinkingRule(["claude-sonnet-4-5"], "claude-sonnet-4-5", "claude-sonnet-4-5-thinking"),
+]
+
+const EFFORT_RULE_BY_MODEL = new Map<string, EffortRule>(
+    EFFORT_RULES.flatMap(rule => rule.match.map(name => [name, rule] as const)),
+)
+
+export function mapModel(openaiModel: string, reasoningEffort?: ReasoningEffort): string {
+    const raw = openaiModel
     const norm = raw.trim().toLowerCase().replace(/[._]/g, "-")
 
-    if (norm === "gemini-4-argon" || norm === "gemini-argon" || norm === "argon") {
-        if (reasoningEffort === "low") return "gemini-4-argon-low"
-        if (reasoningEffort === "high") return "gemini-4-argon-high"
-        return "gemini-4-argon"
-    }
-
-    if (norm === "gemini-3-8-flash" || norm === "gemini-3-8-flash-preview") {
-        if (reasoningEffort === "low") return "gemini-3.8-flash-low"
-        if (reasoningEffort === "high") return "gemini-3.8-flash-high"
-        return "gemini-3.8-flash-medium"
-    }
-    if (norm === "gemini-3-7-flash") {
-        if (reasoningEffort === "low") return "gemini-3.7-flash-low"
-        if (reasoningEffort === "high") return "gemini-3.7-flash-high"
-        return "gemini-3.7-flash-medium"
-    }
-    if (norm === "gemini-3-6-flash") {
-        if (reasoningEffort === "low") return "gemini-3.6-flash-low"
-        if (reasoningEffort === "high") return "gemini-3.6-flash-high"
-        return "gemini-3.6-flash-medium"
-    }
-    if (norm === "gemini-3-5-flash-lite") {
-        return "gemini-3.5-flash-lite"
-    }
-    if (norm === "gemini-3-1-pro" || norm === "gemini-3-1-pro-preview") {
-        return reasoningEffort === "low" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high"
-    }
-    if (norm === "gemini-3-pro") {
-        return reasoningEffort === "low" ? "gemini-3-pro-low" : "gemini-3-pro-high"
-    }
-    if (norm === "gemini-2-5-flash") {
-        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
-            ? "gemini-2.5-flash-thinking"
-            : "gemini-2.5-flash"
-    }
-    if (norm === "claude-opus-5-5" || norm === "claude-opus-5.5") {
-        return "claude-opus-5-5-thinking"
-    }
-    if (norm === "claude-sonnet-5-5" || norm === "claude-sonnet-5.5") {
-        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
-            ? "claude-sonnet-5-5-thinking"
-            : "claude-sonnet-5-5"
-    }
-    if (norm === "claude-opus-4-6" || norm === "claude-opus-4.6") {
-        return "claude-opus-4-6-thinking"
-    }
-    if (norm === "claude-sonnet-4-6" || norm === "claude-sonnet-4.6") {
-        return "claude-sonnet-4-6"
-    }
-    if (norm === "claude-opus-4-5" || norm === "claude-opus-4.5") {
-        return "claude-opus-4-5-thinking"
-    }
-    if (norm === "claude-sonnet-4-5" || norm === "claude-sonnet-4.5") {
-        return (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high")
-            ? "claude-sonnet-4-5-thinking"
-            : "claude-sonnet-4-5"
-    }
-
-    return raw
+    const rule = EFFORT_RULE_BY_MODEL.get(norm)
+    if (!rule) return raw
+    return (reasoningEffort && rule[reasoningEffort]) || rule.fallback
 }
-
 
 const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_INLINE_IMAGE_BASE64_CHARS = Math.ceil(MAX_INLINE_IMAGE_BYTES / 3) * 4
@@ -287,7 +271,12 @@ export function translateMessages(messages: OpenAIMessage[]): ClaudeMessage[] {
                             name: tc.function.name,
                             input: parseToolCallArguments(tc.function.arguments, index),
                         }
-                        const sig = (tc as any).thought_signature || (tc as any).thoughtSignature
+                        const sig = (tc as any).thought_signature
+                            || (tc as any).thoughtSignature
+                            || (tc.function as any)?.thought_signature
+                            || (tc.function as any)?.thoughtSignature
+                            || (msg as any).thought_signature
+                            || (msg as any).thoughtSignature
                         if (sig) {
                             toolBlock.thought_signature = sig
                             toolBlock.thoughtSignature = sig

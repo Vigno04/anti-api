@@ -7,33 +7,13 @@ import { fetchAntigravityModels } from "~/services/antigravity/quota-fetch"
 import { listZedModelsForAccount } from "~/services/zed/chat"
 import { listKiroModelsForAccount } from "~/services/kiro/chat"
 import {
-    clearAllDynamicCodexModelsByAccount,
-    clearAllDynamicCopilotModelsByAccount,
-    clearAllDynamicAntigravityModelsByAccount,
-    clearAllDynamicZedModelsByAccount,
-    clearAllDynamicKiroModelsByAccount,
-    clearDynamicAntigravityModels,
-    clearDynamicAntigravityModelsForAccount,
-    clearDynamicCodexModels,
-    clearDynamicCodexModelsForAccount,
-    clearDynamicCopilotModels,
-    clearDynamicCopilotModelsForAccount,
-    clearDynamicZedModels,
-    clearDynamicZedModelsForAccount,
-    clearDynamicKiroModels,
-    clearDynamicKiroModelsForAccount,
+    clearAllDynamicProviderModelsByAccount,
+    clearDynamicProviderModels,
+    clearDynamicProviderModelsForAccount,
     getProviderModels,
     getProviderModelsForAccount,
-    setDynamicAntigravityModels,
-    setDynamicAntigravityModelsForAccount,
-    setDynamicCodexModels,
-    setDynamicCodexModelsForAccount,
-    setDynamicCopilotModels,
-    setDynamicCopilotModelsForAccount,
-    setDynamicZedModels,
-    setDynamicZedModelsForAccount,
-    setDynamicKiroModels,
-    setDynamicKiroModelsForAccount,
+    setDynamicProviderModels,
+    setDynamicProviderModelsForAccount,
     type ProviderModelOption,
 } from "~/services/routing/models"
 import { loadRoutingConfig, saveRoutingConfig, setActiveFlow, type RoutingEntry, type RoutingFlow, type AccountRoutingConfig } from "~/services/routing/config"
@@ -42,34 +22,32 @@ import { getAggregatedQuota } from "~/services/quota-aggregator"
 import { readFileSync } from "fs"
 import { join } from "path"
 import { randomUUID } from "crypto"
-import type { ProviderAccount, ProviderAccountSummary } from "~/services/auth/types"
+import { AUTH_PROVIDERS, type AuthProvider, type ProviderAccount, type ProviderAccountSummary } from "~/services/auth/types"
 import { getPublicDir } from "~/lib/public-dir"
 
 export const routingRouter = new Hono()
 
-const COPILOT_SYNC_TTL_MS = 60_000
-const COPILOT_SYNC_TIMEOUT_MS = 800
-const CODEX_SYNC_TTL_MS = 60_000
-const CODEX_SYNC_TIMEOUT_MS = 800
-const ANTIGRAVITY_SYNC_TTL_MS = 60_000
-const ANTIGRAVITY_SYNC_TIMEOUT_MS = 800
-const ZED_SYNC_TTL_MS = 60_000
-const ZED_SYNC_TIMEOUT_MS = 800
-const KIRO_SYNC_TTL_MS = 60_000
-const KIRO_SYNC_TIMEOUT_MS = 800
+const SYNC_TTL_MS = 60_000
+const SYNC_TIMEOUT_MS = 800
 const QUOTA_TIMEOUT_MS = 1200
 const QUOTA_TTL_MS = 15_000
 
-let lastCopilotSyncAt = 0
-let copilotSyncInFlight: Promise<void> | null = null
-let lastCodexSyncAt = 0
-let codexSyncInFlight: Promise<void> | null = null
-let lastAntigravitySyncAt = 0
-let antigravitySyncInFlight: Promise<void> | null = null
-let lastZedSyncAt = 0
-let zedSyncInFlight: Promise<void> | null = null
-let lastKiroSyncAt = 0
-let kiroSyncInFlight: Promise<void> | null = null
+interface ProviderSyncState {
+    lastSyncAt: number
+    inFlight: Promise<void> | null
+}
+
+const syncStates = new Map<AuthProvider, ProviderSyncState>()
+
+function getSyncState(provider: AuthProvider): ProviderSyncState {
+    let state = syncStates.get(provider)
+    if (!state) {
+        state = { lastSyncAt: 0, inFlight: null }
+        syncStates.set(provider, state)
+    }
+    return state
+}
+
 let lastQuotaSnapshot: Awaited<ReturnType<typeof getAggregatedQuota>> | null = null
 let lastQuotaAt = 0
 let quotaInFlight: Promise<Awaited<ReturnType<typeof getAggregatedQuota>> | null> | null = null
@@ -89,7 +67,7 @@ async function settleWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Pro
     return result as { ok: boolean; value?: T; error?: Error; timedOut?: boolean }
 }
 
-function resolveAccountLabel(provider: "antigravity" | "codex" | "copilot" | "zed" | "kiro" | "grok", accountId: string, fallback?: string): string {
+function resolveAccountLabel(provider: AuthProvider, accountId: string, fallback?: string): string {
     if (accountId === "auto") return "auto"
     const account = authStore.getAccount(provider, accountId)
     return account?.label || account?.email || account?.login || fallback || accountId
@@ -119,7 +97,7 @@ function syncAccountRoutingLabels(accountRouting?: AccountRoutingConfig): Accoun
     }
 }
 
-function listAccountsInOrder(provider: "antigravity" | "codex" | "copilot" | "zed" | "kiro" | "grok"): ProviderAccount[] {
+function listAccountsInOrder(provider: AuthProvider): ProviderAccount[] {
     let accounts: ProviderAccount[] = []
     try {
         accounts = authStore.listAccounts(provider) || []
@@ -160,6 +138,62 @@ function normalizeRemoteModels(prefix: string, models: Array<{ id?: string; name
     return Array.from(merged.values())
 }
 
+function triggerProviderSync(
+    provider: AuthProvider,
+    displayName: string,
+    accounts: ProviderAccount[],
+    now: number,
+    fetchModelsForAccount: (account: ProviderAccount) => Promise<ProviderModelOption[]>
+): Promise<void> | null {
+    const state = getSyncState(provider)
+    if (accounts.length === 0) {
+        clearDynamicProviderModels(provider)
+        clearAllDynamicProviderModelsByAccount(provider)
+        state.lastSyncAt = 0
+        return state.inFlight
+    }
+
+    if (now - state.lastSyncAt > SYNC_TTL_MS && !state.inFlight) {
+        state.lastSyncAt = now
+        state.inFlight = (async () => {
+            const mergedModels = new Map<string, ProviderModelOption>()
+            try {
+                for (const account of accounts) {
+                    try {
+                        const dynamicModels = await fetchModelsForAccount(account)
+                        if (dynamicModels.length === 0) {
+                            clearDynamicProviderModelsForAccount(provider, account.id)
+                            continue
+                        }
+                        setDynamicProviderModelsForAccount(provider, account.id, dynamicModels)
+                        for (const model of dynamicModels) {
+                            if (!mergedModels.has(model.id)) mergedModels.set(model.id, model)
+                        }
+                        consola.debug(`[routing] ${displayName} models synced (${dynamicModels.length}) from ${account.id}`)
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error)
+                        clearDynamicProviderModelsForAccount(provider, account.id)
+                        consola.debug(`[routing] ${displayName} models sync skipped ${account.id}: ${message}`)
+                    }
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                consola.warn(`[routing] ${displayName} models sync failed: ${message}`)
+            } finally {
+                if (mergedModels.size > 0) {
+                    setDynamicProviderModels(provider, Array.from(mergedModels.values()))
+                } else {
+                    clearDynamicProviderModels(provider)
+                    consola.debug(`[routing] ${displayName} models sync unavailable; using static fallback`)
+                }
+                state.inFlight = null
+            }
+        })()
+    }
+
+    return state.inFlight
+}
+
 routingRouter.get("/", (c) => {
     try {
         const htmlPath = join(getPublicDir(import.meta.dir, "../../../public"), "routing.html")
@@ -186,256 +220,37 @@ routingRouter.get("/config", async (c) => {
     const kiroAccounts = listAccountsInOrder("kiro")
 
     const now = Date.now()
-    if (copilotAccounts.length === 0) {
-        clearDynamicCopilotModels()
-        clearAllDynamicCopilotModelsByAccount()
-        lastCopilotSyncAt = 0
-    } else if (now - lastCopilotSyncAt > COPILOT_SYNC_TTL_MS) {
-        if (!copilotSyncInFlight) {
-            lastCopilotSyncAt = now
-            copilotSyncInFlight = (async () => {
-                const mergedModels = new Map<string, ProviderModelOption>()
-                try {
-                    for (const account of copilotAccounts) {
-                        try {
-                            const remoteModels = await listCopilotModelsForAccount(account)
-                            const dynamicModels = normalizeRemoteModels("Copilot", remoteModels)
-                            if (dynamicModels.length === 0) {
-                                clearDynamicCopilotModelsForAccount(account.id)
-                                continue
-                            }
-                            setDynamicCopilotModelsForAccount(account.id, dynamicModels)
-                            for (const model of dynamicModels) {
-                                if (!mergedModels.has(model.id)) mergedModels.set(model.id, model)
-                            }
-                            consola.debug(`[routing] Copilot models synced (${dynamicModels.length}) from ${account.id}`)
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error)
-                            clearDynamicCopilotModelsForAccount(account.id)
-                            consola.debug(`[routing] Copilot models sync skipped ${account.id}: ${message}`)
-                        }
-                    }
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    consola.warn(`[routing] Copilot models sync failed: ${message}`)
-                } finally {
-                    if (mergedModels.size > 0) {
-                        setDynamicCopilotModels(Array.from(mergedModels.values()))
-                    } else {
-                        clearDynamicCopilotModels()
-                        consola.debug("[routing] Copilot models sync unavailable; using static fallback")
-                    }
-                    copilotSyncInFlight = null
-                }
-            })()
-        }
-    }
 
-    if (codexAccounts.length === 0) {
-        clearDynamicCodexModels()
-        clearAllDynamicCodexModelsByAccount()
-        lastCodexSyncAt = 0
-    } else if (now - lastCodexSyncAt > CODEX_SYNC_TTL_MS) {
-        if (!codexSyncInFlight) {
-            lastCodexSyncAt = now
-            codexSyncInFlight = (async () => {
-                const mergedModels = new Map<string, ProviderModelOption>()
-                try {
-                    for (const account of codexAccounts) {
-                        try {
-                            const remoteModels = await listCodexModelsForAccount(account)
-                            if (remoteModels.length === 0) {
-                                clearDynamicCodexModelsForAccount(account.id)
-                                continue
-                            }
-                            setDynamicCodexModelsForAccount(account.id, remoteModels)
-                            for (const model of remoteModels) {
-                                if (!mergedModels.has(model.id)) mergedModels.set(model.id, model)
-                            }
-                            consola.debug(`[routing] Codex models synced (${remoteModels.length}) from ${account.id}`)
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error)
-                            clearDynamicCodexModelsForAccount(account.id)
-                            consola.debug(`[routing] Codex models sync skipped ${account.id}: ${message}`)
-                        }
-                    }
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    consola.warn(`[routing] Codex models sync failed: ${message}`)
-                } finally {
-                    if (mergedModels.size > 0) {
-                        setDynamicCodexModels(Array.from(mergedModels.values()))
-                    } else {
-                        clearDynamicCodexModels()
-                        consola.debug("[routing] Codex models sync unavailable; using static fallback")
-                    }
-                    codexSyncInFlight = null
-                }
-            })()
-        }
-    }
+    const activeSyncs = [
+        triggerProviderSync("copilot", "Copilot", copilotAccounts, now, async (account) => {
+            const remote = await listCopilotModelsForAccount(account)
+            return normalizeRemoteModels("Copilot", remote)
+        }),
+        triggerProviderSync("codex", "Codex", codexAccounts, now, (account) => listCodexModelsForAccount(account)),
+        triggerProviderSync("antigravity", "Antigravity", antigravityAccounts, now, async (account) => {
+            const active = await accountManager.getAccountById(account.id)
+            if (!active) return []
+            const remote = await fetchAntigravityModels(active.accessToken, active.projectId, active.proxy)
+            return Object.keys(remote.models || {}).map((id) => ({
+                id,
+                label: `Antigravity - ${id}`,
+            }))
+        }),
+        triggerProviderSync("zed", "Zed", zedAccounts, now, async (account) => {
+            const remote = await listZedModelsForAccount(account)
+            return normalizeRemoteModels("Zed", remote.map(model => ({
+                id: model.id,
+                name: model.display_name || model.id,
+            })))
+        }),
+        triggerProviderSync("kiro", "Kiro", kiroAccounts, now, async (account) => {
+            const remote = await listKiroModelsForAccount(account)
+            return normalizeRemoteModels("Kiro", remote)
+        }),
+    ].filter((p): p is Promise<void> => p !== null)
 
-    if (antigravityAccounts.length === 0) {
-        clearDynamicAntigravityModels()
-        clearAllDynamicAntigravityModelsByAccount()
-        lastAntigravitySyncAt = 0
-    } else if (now - lastAntigravitySyncAt > ANTIGRAVITY_SYNC_TTL_MS) {
-        if (!antigravitySyncInFlight) {
-            lastAntigravitySyncAt = now
-            antigravitySyncInFlight = (async () => {
-                const mergedModels = new Map<string, ProviderModelOption>()
-                try {
-                    for (const account of antigravityAccounts) {
-                        try {
-                            const active = await accountManager.getAccountById(account.id)
-                            if (!active) {
-                                clearDynamicAntigravityModelsForAccount(account.id)
-                                continue
-                            }
-                            const remote = await fetchAntigravityModels(active.accessToken, active.projectId, active.proxy)
-                            const models = Object.keys(remote.models || {}).map((id) => ({
-                                id,
-                                label: `Antigravity - ${id}`,
-                            }))
-                            if (models.length > 0) {
-                                setDynamicAntigravityModelsForAccount(account.id, models)
-                                for (const m of models) {
-                                    if (!mergedModels.has(m.id)) mergedModels.set(m.id, m)
-                                }
-                                consola.debug(`[routing] Antigravity models synced (${models.length}) from ${account.id}`)
-                            } else {
-                                clearDynamicAntigravityModelsForAccount(account.id)
-                            }
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error)
-                            clearDynamicAntigravityModelsForAccount(account.id)
-                            consola.debug(`[routing] Antigravity models sync skipped ${account.id}: ${message}`)
-                        }
-                    }
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    consola.warn(`[routing] Antigravity models sync failed: ${message}`)
-                } finally {
-                    if (mergedModels.size > 0) {
-                        setDynamicAntigravityModels(Array.from(mergedModels.values()))
-                    } else {
-                        clearDynamicAntigravityModels()
-                    }
-                    antigravitySyncInFlight = null
-                }
-            })()
-        }
-    }
-
-    if (zedAccounts.length === 0) {
-        clearDynamicZedModels()
-        clearAllDynamicZedModelsByAccount()
-        lastZedSyncAt = 0
-    } else if (now - lastZedSyncAt > ZED_SYNC_TTL_MS) {
-        if (!zedSyncInFlight) {
-            lastZedSyncAt = now
-            zedSyncInFlight = (async () => {
-                const mergedModels = new Map<string, ProviderModelOption>()
-                try {
-                    for (const account of zedAccounts) {
-                        try {
-                            const remoteModels = await listZedModelsForAccount(account)
-                            const dynamicModels = normalizeRemoteModels("Zed", remoteModels.map(model => ({
-                                id: model.id,
-                                name: model.display_name || model.id,
-                            })))
-                            if (dynamicModels.length === 0) {
-                                clearDynamicZedModelsForAccount(account.id)
-                                continue
-                            }
-                            setDynamicZedModelsForAccount(account.id, dynamicModels)
-                            for (const model of dynamicModels) {
-                                if (!mergedModels.has(model.id)) mergedModels.set(model.id, model)
-                            }
-                            consola.debug(`[routing] Zed models synced (${dynamicModels.length}) from ${account.id}`)
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error)
-                            clearDynamicZedModelsForAccount(account.id)
-                            consola.debug(`[routing] Zed models sync skipped ${account.id}: ${message}`)
-                        }
-                    }
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    consola.warn(`[routing] Zed models sync failed: ${message}`)
-                } finally {
-                    if (mergedModels.size > 0) {
-                        setDynamicZedModels(Array.from(mergedModels.values()))
-                    } else {
-                        clearDynamicZedModels()
-                    }
-                    zedSyncInFlight = null
-                }
-            })()
-        }
-    }
-
-    if (kiroAccounts.length === 0) {
-        clearDynamicKiroModels()
-        clearAllDynamicKiroModelsByAccount()
-        lastKiroSyncAt = 0
-    } else if (now - lastKiroSyncAt > KIRO_SYNC_TTL_MS) {
-        if (!kiroSyncInFlight) {
-            lastKiroSyncAt = now
-            kiroSyncInFlight = (async () => {
-                const mergedModels = new Map<string, ProviderModelOption>()
-                try {
-                    for (const account of kiroAccounts) {
-                        try {
-                            const remoteModels = await listKiroModelsForAccount(account)
-                            const dynamicModels = normalizeRemoteModels("Kiro", remoteModels)
-                            if (dynamicModels.length === 0) {
-                                clearDynamicKiroModelsForAccount(account.id)
-                                continue
-                            }
-                            setDynamicKiroModelsForAccount(account.id, dynamicModels)
-                            for (const model of dynamicModels) {
-                                if (!mergedModels.has(model.id)) mergedModels.set(model.id, model)
-                            }
-                            consola.debug(`[routing] Kiro models synced (${dynamicModels.length}) from ${account.id}`)
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : String(error)
-                            clearDynamicKiroModelsForAccount(account.id)
-                            consola.debug(`[routing] Kiro models sync skipped ${account.id}: ${message}`)
-                        }
-                    }
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    consola.warn(`[routing] Kiro models sync failed: ${message}`)
-                } finally {
-                    if (mergedModels.size > 0) {
-                        setDynamicKiroModels(Array.from(mergedModels.values()))
-                    } else {
-                        clearDynamicKiroModels()
-                    }
-                    kiroSyncInFlight = null
-                }
-            })()
-        }
-    }
-
-    const syncWaiters: Promise<unknown>[] = []
-    if (copilotSyncInFlight) {
-        syncWaiters.push(settleWithTimeout(copilotSyncInFlight, COPILOT_SYNC_TIMEOUT_MS))
-    }
-    if (codexSyncInFlight) {
-        syncWaiters.push(settleWithTimeout(codexSyncInFlight, CODEX_SYNC_TIMEOUT_MS))
-    }
-    if (antigravitySyncInFlight) {
-        syncWaiters.push(settleWithTimeout(antigravitySyncInFlight, ANTIGRAVITY_SYNC_TIMEOUT_MS))
-    }
-    if (zedSyncInFlight) {
-        syncWaiters.push(settleWithTimeout(zedSyncInFlight, ZED_SYNC_TIMEOUT_MS))
-    }
-    if (kiroSyncInFlight) {
-        syncWaiters.push(settleWithTimeout(kiroSyncInFlight, KIRO_SYNC_TIMEOUT_MS))
-    }
-    if (syncWaiters.length > 0) {
-        await Promise.all(syncWaiters)
+    if (activeSyncs.length > 0) {
+        await Promise.all(activeSyncs.map(p => settleWithTimeout(p, SYNC_TIMEOUT_MS)))
     }
 
     const accounts = {
@@ -529,7 +344,6 @@ routingRouter.post("/config", async (c) => {
                 ? !!body.accountRouting.separateThinkingModels
                 : currentConfig.accountRouting?.separateThinkingModels ?? false,
             routes: Array.isArray(body.accountRouting.routes)
-
                 ? body.accountRouting.routes.map(route => ({
                     id: route.id || randomUUID(),
                     modelId: (route.modelId || "").trim(),
@@ -560,73 +374,47 @@ routingRouter.post("/active-flow", async (c) => {
 routingRouter.post("/cleanup", async (c) => {
     const config = loadRoutingConfig()
 
-    // 获取所有有效账号
-    const validAntigravity = new Set(authStore.listSummaries("antigravity").map(a => a.id || a.email))
-    const validCodex = new Set(authStore.listSummaries("codex").map(a => a.id || a.email))
-    const validCopilot = new Set(authStore.listSummaries("copilot").map(a => a.id || a.email))
-    const validZed = new Set(authStore.listSummaries("zed").map(a => a.id || a.email))
-    const validKiro = new Set(authStore.listSummaries("kiro").map(a => a.id || a.email))
+    const validByProvider = new Map<AuthProvider, Set<string>>(
+        AUTH_PROVIDERS.map(provider => [
+            provider,
+            new Set(authStore.listSummaries(provider).map(a => a.id || a.email || "")),
+        ])
+    )
+
+    const isEntryValid = (entry: { provider: AuthProvider; accountId: string }): boolean => {
+        if (entry.provider === "antigravity" && entry.accountId === "auto") return true
+        return validByProvider.get(entry.provider)?.has(entry.accountId) ?? false
+    }
 
     let removedCount = 0
+    const filterEntries = <T extends { provider: AuthProvider; accountId: string }>(entries: T[]): T[] =>
+        entries.filter(entry => {
+            const valid = isEntryValid(entry)
+            if (!valid) removedCount++
+            return valid
+        })
 
-    // 清理每个 flow 中的孤立 entries
     const cleanedFlows = config.flows.map(flow => ({
         ...flow,
-        entries: flow.entries.filter(entry => {
-            let isValid = false
-            if (entry.provider === "antigravity") {
-                isValid = entry.accountId === "auto" || validAntigravity.has(entry.accountId)
-            } else if (entry.provider === "codex") {
-                isValid = validCodex.has(entry.accountId)
-            } else if (entry.provider === "copilot") {
-                isValid = validCopilot.has(entry.accountId)
-            } else if (entry.provider === "zed") {
-                isValid = validZed.has(entry.accountId)
-            } else if (entry.provider === "kiro") {
-                isValid = validKiro.has(entry.accountId)
-            }
-            if (!isValid) {
-                removedCount++
-            }
-            return isValid
-        })
+        entries: filterEntries(flow.entries),
     }))
 
-    // 清理 account routing 中的孤立 entries
-    const cleanedAccountRouting = config.accountRouting ? {
-        ...config.accountRouting,
-        routes: config.accountRouting.routes.map(route => ({
-            ...route,
-            entries: route.entries.filter(entry => {
-                let isValid = false
-                if (entry.provider === "antigravity") {
-                    isValid = entry.accountId === "auto" || validAntigravity.has(entry.accountId)
-                } else if (entry.provider === "codex") {
-                    isValid = validCodex.has(entry.accountId)
-                } else if (entry.provider === "copilot") {
-                    isValid = validCopilot.has(entry.accountId)
-                } else if (entry.provider === "zed") {
-                    isValid = validZed.has(entry.accountId)
-                } else if (entry.provider === "kiro") {
-                    isValid = validKiro.has(entry.accountId)
-                }
-                if (!isValid) {
-                    removedCount++
-                }
-                return isValid
-            })
-        }))
-    } : config.accountRouting
+    const cleanedAccountRouting = config.accountRouting
+        ? {
+            ...config.accountRouting,
+            routes: config.accountRouting.routes.map(route => ({
+                ...route,
+                entries: filterEntries(route.entries),
+            })),
+        }
+        : config.accountRouting
 
-    // 保存清理后的配置
     const newConfig = saveRoutingConfig(cleanedFlows, undefined, cleanedAccountRouting)
-
-    // 同时清理 account-manager 的 rate limit 状态
     accountManager.clearAllRateLimits()
 
     return c.json({
         success: true,
         removedCount,
-        config: newConfig
+        config: newConfig,
     })
 })

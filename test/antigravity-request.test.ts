@@ -154,4 +154,28 @@ test("buildAntigravityParts injects thoughtSignature from block or cache", async
     ], new Map())
 
     expect(partsCachedByArgs[0].thoughtSignature).toBe("sig_from_cache_args")
+
+    // 4. Missing signature for Gemini models falls back to skip_thought_signature_validator
+    const partsFallbackGemini = await buildAntigravityParts([
+        {
+            type: "tool_use",
+            id: "call_missing_sig",
+            name: "default_api:terminal",
+            input: { command: "ls -la" },
+        },
+    ], new Map(), { model: "gemini-3.8-flash-medium" })
+
+    expect(partsFallbackGemini[0].thoughtSignature).toBe("skip_thought_signature_validator")
+
+    // 5. Missing signature for Claude models does not inject fallback
+    const partsClaude = await buildAntigravityParts([
+        {
+            type: "tool_use",
+            id: "call_claude_no_sig",
+            name: "read_file",
+            input: { path: "foo.txt" },
+        },
+    ], new Map(), { model: "claude-sonnet-4-5" })
+
+    expect(partsClaude[0].thoughtSignature).toBeUndefined()
 })

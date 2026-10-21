@@ -13,17 +13,26 @@ let rateLimitMarkCalls = 0
 let upstreamStatus = 404
 let upstreamBody = "not found"
 
+const realConfig = await import("~/services/routing/config")
 mock.module("~/services/routing/config", () => ({
+    ...realConfig,
     loadRoutingConfig: () => currentConfig,
+    isSeparateThinkingModelsEnabled: () => false,
+    isHiddenCodexModel: () => false,
+    CODEX_HIDDEN_MODELS: new Set(),
 }))
 
+const realChat = await import("~/services/antigravity/chat")
 mock.module("~/services/antigravity/chat", () => ({
+    ...realChat,
     createChatCompletionWithOptions: async () => {
         throw new UpstreamError("antigravity", upstreamStatus, upstreamBody)
     },
     createChatCompletionStreamWithOptions: async function* () {
         throw new UpstreamError("antigravity", upstreamStatus, upstreamBody)
     },
+    isAntigravityModelSupportedForAccount: () => true,
+    markAntigravityModelUnsupported: () => { },
 }))
 
 mock.module("~/services/antigravity/account-manager", () => ({

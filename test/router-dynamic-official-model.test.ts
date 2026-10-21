@@ -1,7 +1,9 @@
 import { afterAll, afterEach, expect, mock, test } from "bun:test"
 import { clearDynamicCopilotModels, setDynamicCopilotModels } from "~/services/routing/models"
 
+const realConfig = await import("~/services/routing/config")
 mock.module("~/services/routing/config", () => ({
+    ...realConfig,
     loadRoutingConfig: () => ({
         version: 2,
         updatedAt: new Date().toISOString(),
@@ -10,7 +12,9 @@ mock.module("~/services/routing/config", () => ({
     }),
 }))
 
+const realChat = await import("~/services/antigravity/chat")
 mock.module("~/services/antigravity/chat", () => ({
+    ...realChat,
     createChatCompletionWithOptions: async () => ({ contentBlocks: [], stopReason: "end_turn", usage: {} }),
     createChatCompletionStreamWithOptions: async function* () {
         yield ""

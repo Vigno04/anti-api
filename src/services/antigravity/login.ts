@@ -153,8 +153,8 @@ export function setAuth(accessToken: string, refreshToken?: string, email?: stri
     saveAuth()
 }
 
-export function getAntigravityLoginUrl(redirectUri?: string): string {
-    return getAntigravityAuthUrl(redirectUri)
+export function getAntigravityLoginUrl(): string {
+    return getAntigravityAuthUrl()
 }
 
 /**

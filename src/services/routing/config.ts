@@ -3,10 +3,20 @@ import { join } from "path"
 import { randomUUID } from "crypto"
 import consola from "consola"
 import type { AuthProvider } from "~/services/auth/types"
-import { isHiddenCodexModel } from "./models"
 import { getDataDir } from "~/lib/data-dir"
 import { safeErrorMessage } from "~/lib/redaction"
 import { loadSettings } from "~/services/settings"
+
+export const CODEX_HIDDEN_MODELS = new Set([
+    "gpt-5.3-max-high",
+    "gpt-5.3-max",
+    "gpt-5.2-max-high",
+    "gpt-5.2-max",
+])
+
+export function isHiddenCodexModel(modelId: string): boolean {
+    return CODEX_HIDDEN_MODELS.has(modelId)
+}
 
 export interface RoutingEntry {
     id: string

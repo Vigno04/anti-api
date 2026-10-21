@@ -1,3 +1,4 @@
+import { quotaPoolForModel, type QuotaPool } from "~/lib/model-catalog"
 import consola from "consola"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
@@ -18,6 +19,7 @@ import { UpstreamError } from "~/lib/error"
 import { getDataDir } from "~/lib/data-dir"
 import { fetchZedAccountOverview } from "~/services/zed/chat"
 import { safeErrorMessage } from "~/lib/redaction"
+import { setDynamicAntigravityModelsForAccount } from "~/services/routing/models"
 
 type ModelInfo = AntigravityModelInfo
 
@@ -45,6 +47,7 @@ type QuotaCacheEntry = {
     accountId: string
     displayName: string
     bars: AccountBar[]
+    models?: string[]
     updatedAt: string
     proxy?: string
     label?: string
@@ -57,7 +60,9 @@ let cacheLoaded = false
 const PROVIDER_FETCH_TIMEOUT_MS = 4000
 
 function getCacheKey(provider: QuotaCacheEntry["provider"], accountId: string): string {
-    return `${provider}:${accountId}`
+    const raw = accountId.trim()
+    const cleanId = raw.startsWith(`${provider}:`) ? raw.slice(provider.length + 1) : raw
+    return `${provider}:${cleanId}`
 }
 
 function loadQuotaCache(): void {
@@ -88,7 +93,53 @@ function saveQuotaCache(): void {
 }
 
 function updateQuotaCache(entry: QuotaCacheEntry): void {
+    loadQuotaCache()
+    const existing = quotaCache.get(getCacheKey(entry.provider, entry.accountId))
+    if (!entry.models && existing?.models) {
+        entry.models = existing.models
+    }
     quotaCache.set(getCacheKey(entry.provider, entry.accountId), entry)
+    saveQuotaCache()
+}
+
+export function getCachedAntigravityModelsForAccount(accountId: string): string[] | undefined {
+    loadQuotaCache()
+    const cached = quotaCache.get(getCacheKey("antigravity", accountId))
+    if (cached?.models && cached.models.length > 0) {
+        return cached.models
+    }
+    const account = authStore.getAccount("antigravity", accountId)
+    if (account?.metadata && Array.isArray((account.metadata as any).availableModels)) {
+        return (account.metadata as any).availableModels
+    }
+    return undefined
+}
+
+export function updateCachedAntigravityModelsForAccount(accountId: string, models: string[]): void {
+    loadQuotaCache()
+    const key = getCacheKey("antigravity", accountId)
+    const existing = quotaCache.get(key)
+    if (existing) {
+        existing.models = models
+        saveQuotaCache()
+    } else {
+        const entry: QuotaCacheEntry = {
+            provider: "antigravity",
+            accountId,
+            displayName: accountId,
+            bars: [],
+            models,
+            updatedAt: new Date().toISOString(),
+        }
+        quotaCache.set(key, entry)
+        saveQuotaCache()
+    }
+    if (models.length > 0) {
+        setDynamicAntigravityModelsForAccount(
+            accountId,
+            models.map(id => ({ id, label: `Antigravity - ${id}` }))
+        )
+    }
 }
 
 function getCachedBars(provider: QuotaCacheEntry["provider"], accountId: string): AccountBar[] | null {
@@ -123,40 +174,28 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: () => 
     })
 }
 
-function defaultCodexBars(): AccountBar[] {
-    return [
-        { key: "session", label: "5h", percentage: 0 },
-        { key: "week", label: "week", percentage: 0 },
-    ]
-}
-
-function defaultCopilotBars(): AccountBar[] {
-    return [{ key: "premium", label: "premium", percentage: 0 }]
-}
-
-function defaultZedBars(): AccountBar[] {
-    return [{ key: "hosted", label: "hosted", percentage: 0 }]
-}
-
-function defaultKiroBars(): AccountBar[] {
-    return [{ key: "access", label: "access", percentage: 100 }]
+function defaultBarsForProvider(provider: QuotaProvider): AccountBar[] {
+    switch (provider) {
+        case "antigravity":
+            return buildAntigravityBars({})
+        case "codex":
+            return [
+                { key: "session", label: "5h", percentage: 0 },
+                { key: "week", label: "week", percentage: 0 },
+            ]
+        case "copilot":
+            return [{ key: "premium", label: "premium", percentage: 0 }]
+        case "zed":
+            return [{ key: "hosted", label: "hosted", percentage: 0 }]
+        case "kiro":
+            return [{ key: "access", label: "access", percentage: 100 }]
+    }
 }
 
 function buildCachedViews(provider: QuotaCacheEntry["provider"], accounts: ProviderAccount[]): AccountQuotaView[] {
     return accounts.map(account => {
         const displayName = account.label || account.email || account.login || account.id
-        const cachedBars = getCachedBars(provider, account.id)
-        const bars = cachedBars || (
-            provider === "antigravity"
-                ? buildAntigravityBars({})
-                : provider === "codex"
-                    ? defaultCodexBars()
-                    : provider === "copilot"
-                        ? defaultCopilotBars()
-                        : provider === "zed"
-                            ? defaultZedBars()
-                            : defaultKiroBars()
-        )
+        const bars = getCachedBars(provider, account.id) || defaultBarsForProvider(provider)
         return {
             provider,
             accountId: account.id,
@@ -222,11 +261,9 @@ export async function getAggregatedQuota(): Promise<{
 }
 
 async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
-    // Fetch all accounts in parallel for faster loading
     const promises = accounts.map(async (account) => {
         let lastError: Error | null = null
 
-        // Retry up to 2 times for each account
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
                 const refreshed = await refreshAntigravityToken(account)
@@ -234,11 +271,19 @@ async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<Acco
                 const quotaSummary = await fetchAntigravityQuotaSummaryForAccount(refreshed)
                 const bars = buildAntigravityBars(quotaModels, quotaSummary)
                 const displayName = account.label || account.email || account.id
+                const modelList = Object.keys(quotaModels || {})
+                if (modelList.length > 0) {
+                    setDynamicAntigravityModelsForAccount(
+                        account.id,
+                        modelList.map(id => ({ id, label: `Antigravity - ${id}` }))
+                    )
+                }
                 updateQuotaCache({
                     provider: "antigravity",
                     accountId: account.id,
                     displayName,
                     bars,
+                    models: modelList.length > 0 ? modelList : undefined,
                     updatedAt: new Date().toISOString(),
                     proxy: account.proxy,
                     label: account.label,
@@ -254,34 +299,20 @@ async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<Acco
             } catch (error) {
                 lastError = error as Error
                 if (attempt < 1) {
-                    // Wait 500ms before retry (reduced from 1000ms)
                     await new Promise(resolve => setTimeout(resolve, 500))
                 }
             }
         }
 
-        if (lastError) {
-            if (!isCertificateError(lastError) && !isAuthError(lastError)) {
-                consola.warn("Antigravity quota fetch failed:", safeErrorMessage(lastError))
-            }
+        if (lastError && !isCertificateError(lastError) && !isAuthError(lastError)) {
+            consola.warn("Antigravity quota fetch failed:", safeErrorMessage(lastError))
         }
-        const cachedBars = getCachedBars("antigravity", account.id)
         const displayName = account.label || account.email || account.id
-        if (cachedBars) {
-            return {
-                provider: "antigravity" as const,
-                accountId: account.id,
-                displayName,
-                bars: cachedBars,
-                proxy: account.proxy,
-                label: account.label,
-            }
-        }
         return {
             provider: "antigravity" as const,
             accountId: account.id,
             displayName,
-            bars: buildAntigravityBars({}),
+            bars: getCachedBars("antigravity", account.id) || defaultBarsForProvider("antigravity"),
             proxy: account.proxy,
             label: account.label,
         }
@@ -320,69 +351,65 @@ async function refreshAntigravityToken(account: ProviderAccount): Promise<Provid
     }
 }
 
-async function fetchAntigravityModelsForAccount(
+async function withAntigravityTokenRetry<T>(
     account: ProviderAccount,
-    hasRefreshed = false
-): Promise<Record<string, ModelInfo>> {
-    try {
-        const result = await fetchAntigravityModelsRequest(account.accessToken, account.projectId, account.proxy)
-        if (!account.projectId && result.projectId) {
-            account.projectId = result.projectId
-            authStore.saveAccount(account)
-        }
-        return result.models
-    } catch (error) {
-        if (error instanceof UpstreamError && error.status === 401 && account.refreshToken && !hasRefreshed) {
-            try {
-                const refreshed = await refreshAccessToken(account.refreshToken, account.proxy)
-                account.accessToken = refreshed.accessToken
-                account.expiresAt = Date.now() + refreshed.expiresIn * 1000
-                authStore.saveAccount(account)
-                return fetchAntigravityModelsForAccount(account, true)
-            } catch (refreshError) {
-                if (isCertificateError(refreshError) || isAuthError(refreshError)) {
-                    return {}
+    requestFn: (acc: ProviderAccount) => Promise<T>,
+    fallbackOnAuthFailure: T,
+    rethrowOtherErrors: boolean
+): Promise<T> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            return await requestFn(account)
+        } catch (error) {
+            if (error instanceof UpstreamError && error.status === 401 && account.refreshToken && attempt === 0) {
+                try {
+                    const refreshed = await refreshAccessToken(account.refreshToken, account.proxy)
+                    account.accessToken = refreshed.accessToken
+                    account.expiresAt = Date.now() + refreshed.expiresIn * 1000
+                    authStore.saveAccount(account)
+                    continue
+                } catch (refreshError) {
+                    if (isCertificateError(refreshError) || isAuthError(refreshError)) {
+                        return fallbackOnAuthFailure
+                    }
+                    throw refreshError
                 }
-                throw refreshError
             }
+            if (error instanceof UpstreamError && error.status === 401) {
+                return fallbackOnAuthFailure
+            }
+            if (rethrowOtherErrors) {
+                throw error
+            }
+            return fallbackOnAuthFailure
         }
-
-        if (error instanceof UpstreamError && error.status === 401) {
-            return {}
-        }
-
-        throw error
     }
+    return fallbackOnAuthFailure
 }
 
-async function fetchAntigravityQuotaSummaryForAccount(
-    account: ProviderAccount,
-    hasRefreshed = false
-): Promise<AntigravityQuotaSummaryResponse | null> {
-    try {
-        return await fetchAntigravityQuotaSummary(account.accessToken, account.projectId, account.proxy)
-    } catch (error) {
-        if (error instanceof UpstreamError && error.status === 401 && account.refreshToken && !hasRefreshed) {
-            try {
-                const refreshed = await refreshAccessToken(account.refreshToken, account.proxy)
-                account.accessToken = refreshed.accessToken
-                account.expiresAt = Date.now() + refreshed.expiresIn * 1000
-                authStore.saveAccount(account)
-                return fetchAntigravityQuotaSummaryForAccount(account, true)
-            } catch (refreshError) {
-                if (isCertificateError(refreshError) || isAuthError(refreshError)) {
-                    return null
-                }
-                throw refreshError
+async function fetchAntigravityModelsForAccount(account: ProviderAccount): Promise<Record<string, ModelInfo>> {
+    return withAntigravityTokenRetry(
+        account,
+        async (acc) => {
+            const result = await fetchAntigravityModelsRequest(acc.accessToken, acc.projectId, acc.proxy)
+            if (!acc.projectId && result.projectId) {
+                acc.projectId = result.projectId
+                authStore.saveAccount(acc)
             }
-        }
+            return result.models
+        },
+        {},
+        true
+    )
+}
 
-        if (error instanceof UpstreamError && error.status === 401) {
-            return null
-        }
-
-        return null
-    }
+async function fetchAntigravityQuotaSummaryForAccount(account: ProviderAccount): Promise<AntigravityQuotaSummaryResponse | null> {
+    return withAntigravityTokenRetry(
+        account,
+        (acc) => fetchAntigravityQuotaSummary(acc.accessToken, acc.projectId, acc.proxy),
+        null,
+        false
+    )
 }
 
 export function buildAntigravityBars(
@@ -488,66 +515,10 @@ export function buildAntigravityBars(
         return result
     }
 
-    const argonIds = [
-        "gemini-4-argon",
-        "gemini-4-argon-high",
-        "gemini-4-argon-medium",
-        "gemini-4-argon-low",
-        "gemini-4-argon-thinking",
-        "gemini-argon",
-        "gemini-argon-high",
-        "gemini-argon-medium",
-        "gemini-argon-low",
-        "gemini-argon-thinking",
-    ]
-    const claudeGptIds = [
-        "claude-opus-5-5",
-        "claude-opus-5-5-high",
-        "claude-opus-5-5-medium",
-        "claude-opus-5-5-low",
-        "claude-opus-5-5-thinking",
-        "claude-sonnet-5-5",
-        "claude-sonnet-5-5-high",
-        "claude-sonnet-5-5-medium",
-        "claude-sonnet-5-5-low",
-        "claude-sonnet-5-5-thinking",
-        "claude-opus-4-6-thinking",
-        "claude-sonnet-4-6",
-        "claude-opus-4-5-thinking",
-        "claude-sonnet-4-5",
-        "claude-sonnet-4-5-thinking",
-        "gpt-oss-120b",
-        "gpt-oss-120b-medium",
-    ]
-    const geminiIds = [
-        "gemini-pro-agent",
-        "gemini-3.1-pro-high",
-        "gemini-3.1-pro-low",
-        "gemini-3.1-pro",
-        "gemini-pro",
-        "gemini-3-pro-high",
-        "gemini-3-pro-low",
-        "gemini-3.8-flash-high",
-        "gemini-3.8-flash-medium",
-        "gemini-3.8-flash-low",
-        "gemini-3.8-flash",
-        "gemini-3.7-flash-high",
-        "gemini-3.7-flash-medium",
-        "gemini-3.7-flash-low",
-        "gemini-3.6-flash-high",
-        "gemini-3.6-flash-medium",
-        "gemini-3.6-flash-low",
-        "gemini-3.5-flash-lite",
-        "gemini-3.5-flash-low",
-        "gemini-3.5-flash-extra-low",
-        "gemini-3.1-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash-thinking",
-        "gemini-flash",
-    ]
+    const idsInPool = (pool: QuotaPool) => Object.keys(models).filter(id => quotaPoolForModel(id) === pool)
+    const argonIds = idsInPool("argon")
+    const claudeGptIds = idsInPool("claude_gpt")
+    const geminiIds = idsInPool("gemini")
 
     const geminiRaw = buildMergedBar("gemini", "gemini", models, geminiIds)
     const claudeGptRaw = buildMergedBar("claude_gpt", "claude_gpt", models, claudeGptIds)
@@ -556,7 +527,7 @@ export function buildAntigravityBars(
     const now = Date.now()
     const isGeminiWeekly = geminiRaw.resetTime ? (Date.parse(geminiRaw.resetTime) - now > 12 * 3600 * 1000) : false
     const isClaudeWeekly = claudeGptRaw.resetTime ? (Date.parse(claudeGptRaw.resetTime) - now > 12 * 3600 * 1000) : true
-    const hasArgonModels = argonIds.some(id => Boolean(models[id]))
+    const hasArgonModels = argonIds.length > 0
 
     const geminiWeekly: AccountBar = {
         key: "gemini_week",
@@ -626,54 +597,52 @@ function earliestResetTime(times: string[]): string | undefined {
     }, times[0])
 }
 
-async function fetchCodexQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
-    // Fetch all accounts in parallel for faster loading
-    const promises = accounts.map(async (account) => {
-        try {
-            const updated = await refreshCodexIfNeeded(account)
-            const quota = await fetchCodexUsage(updated)
-            updateQuotaCache({
-                provider: "codex",
-                accountId: account.id,
-                displayName: account.email || account.id,
-                bars: quota,
-                updatedAt: new Date().toISOString(),
-            })
-            return {
-                provider: "codex" as const,
-                accountId: account.id,
-                displayName: account.email || account.id,
-                bars: quota,
-            }
-        } catch (error) {
-            if (!isCertificateError(error)) {
-                consola.warn("Codex quota fetch failed:", safeErrorMessage(error))
-            }
-            const cachedBars = getCachedBars("codex", account.id)
-            if (cachedBars) {
-                return {
-                    provider: "codex" as const,
+async function fetchProviderQuotasWithCache(
+    provider: Exclude<QuotaProvider, "antigravity">,
+    label: string,
+    accounts: ProviderAccount[],
+    getDisplayName: (account: ProviderAccount) => string,
+    fetchBars: (account: ProviderAccount) => Promise<AccountBar[]>
+): Promise<AccountQuotaView[]> {
+    return Promise.all(
+        accounts.map(async (account) => {
+            const displayName = getDisplayName(account)
+            try {
+                const bars = await fetchBars(account)
+                updateQuotaCache({
+                    provider,
                     accountId: account.id,
-                    displayName: account.email || account.id,
-                    bars: cachedBars,
+                    displayName,
+                    bars,
+                    updatedAt: new Date().toISOString(),
+                })
+                return { provider, accountId: account.id, displayName, bars }
+            } catch (error) {
+                if (!isCertificateError(error)) {
+                    consola.warn(`${label} quota fetch failed:`, safeErrorMessage(error))
+                }
+                return {
+                    provider,
+                    accountId: account.id,
+                    displayName,
+                    bars: getCachedBars(provider, account.id) || defaultBarsForProvider(provider),
                 }
             }
-            return {
-                provider: "codex" as const,
-                accountId: account.id,
-                displayName: account.email || account.id,
-                bars: [
-                    { key: "session", label: "5h", percentage: 0 },
-                    { key: "week", label: "week", percentage: 0 },
-                ],
-            }
-        }
-    })
-    return Promise.all(promises)
+        })
+    )
 }
 
-async function refreshCodexIfNeeded(account: ProviderAccount): Promise<ProviderAccount> {
-    return refreshCodexAccountIfNeeded(account)
+async function fetchCodexQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
+    return fetchProviderQuotasWithCache(
+        "codex",
+        "Codex",
+        accounts,
+        account => account.email || account.id,
+        async account => {
+            const updated = await refreshCodexAccountIfNeeded(account)
+            return fetchCodexUsage(updated)
+        }
+    )
 }
 
 async function fetchCodexUsage(account: ProviderAccount): Promise<AccountBar[]> {
@@ -721,102 +690,33 @@ async function fetchCodexUsage(account: ProviderAccount): Promise<AccountBar[]> 
 }
 
 async function fetchCopilotQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
-    // Fetch all accounts in parallel for faster loading
-    const promises = accounts.map(async (account) => {
-        try {
-            const bar = await fetchCopilotPremium(account)
-            updateQuotaCache({
-                provider: "copilot",
-                accountId: account.id,
-                displayName: account.login || account.id,
-                bars: [bar],
-                updatedAt: new Date().toISOString(),
-            })
-            return {
-                provider: "copilot" as const,
-                accountId: account.id,
-                displayName: account.login || account.id,
-                bars: [bar],
-            }
-        } catch (error) {
-            consola.warn("Copilot quota fetch failed:", safeErrorMessage(error))
-            const cachedBars = getCachedBars("copilot", account.id)
-            if (cachedBars) {
-                return {
-                    provider: "copilot" as const,
-                    accountId: account.id,
-                    displayName: account.login || account.id,
-                    bars: cachedBars,
-                }
-            }
-            return {
-                provider: "copilot" as const,
-                accountId: account.id,
-                displayName: account.login || account.id,
-                bars: [{ key: "premium", label: "premium", percentage: 0 }],
-            }
-        }
-    })
-    return Promise.all(promises)
+    return fetchProviderQuotasWithCache(
+        "copilot",
+        "Copilot",
+        accounts,
+        account => account.login || account.id,
+        async account => [await fetchCopilotPremium(account)]
+    )
 }
 
 async function fetchZedQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
-    const promises = accounts.map(async (account) => {
-        try {
-            const overview = await fetchZedAccountOverview(account)
-            const bars = [buildZedHostedBar(overview)]
-            updateQuotaCache({
-                provider: "zed",
-                accountId: account.id,
-                displayName: account.label || account.login || account.id,
-                bars,
-                updatedAt: new Date().toISOString(),
-            })
-            return {
-                provider: "zed" as const,
-                accountId: account.id,
-                displayName: account.label || account.login || account.id,
-                bars,
-            }
-        } catch (error) {
-            consola.warn("Zed quota fetch failed:", safeErrorMessage(error))
-            const cachedBars = getCachedBars("zed", account.id)
-            if (cachedBars) {
-                return {
-                    provider: "zed" as const,
-                    accountId: account.id,
-                    displayName: account.label || account.login || account.id,
-                    bars: cachedBars,
-                }
-            }
-            return {
-                provider: "zed" as const,
-                accountId: account.id,
-                displayName: account.label || account.login || account.id,
-                bars: defaultZedBars(),
-            }
-        }
-    })
-    return Promise.all(promises)
+    return fetchProviderQuotasWithCache(
+        "zed",
+        "Zed",
+        accounts,
+        account => account.label || account.login || account.id,
+        async account => [buildZedHostedBar(await fetchZedAccountOverview(account))]
+    )
 }
 
 async function fetchKiroQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
-    return accounts.map(account => {
-        const bars = defaultKiroBars()
-        updateQuotaCache({
-            provider: "kiro",
-            accountId: account.id,
-            displayName: account.label || account.login || account.id,
-            bars,
-            updatedAt: new Date().toISOString(),
-        })
-        return {
-            provider: "kiro" as const,
-            accountId: account.id,
-            displayName: account.label || account.login || account.id,
-            bars,
-        }
-    })
+    return fetchProviderQuotasWithCache(
+        "kiro",
+        "Kiro",
+        accounts,
+        account => account.label || account.login || account.id,
+        async () => defaultBarsForProvider("kiro")
+    )
 }
 
 function buildZedHostedBar(data: Awaited<ReturnType<typeof fetchZedAccountOverview>>): AccountBar {

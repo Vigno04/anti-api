@@ -23,7 +23,6 @@ export interface AppSettings {
     optimizeQuotaSort: boolean
     captureLogs: boolean
     // API & Model filter settings
-    latestModelsOnly: boolean
     onlyActiveProviders: boolean
     separateThinkingModels: boolean
     disabledModels: string[]
@@ -42,7 +41,6 @@ const DEFAULT_SETTINGS: AppSettings = {
     trackUsage: true,
     optimizeQuotaSort: false,
     captureLogs: false,
-    latestModelsOnly: true,
     onlyActiveProviders: true,
     separateThinkingModels: false,
     disabledModels: [],

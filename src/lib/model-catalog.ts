@@ -1,12 +1,10 @@
 /**
  * Semi-automatic Antigravity model catalog.
  *
- * Instead of hardcoding which models to expose, we look at the model IDs
- * reported by Antigravity (fetchAvailableModels) and keep only the highest
- * version of each family:
- *   - claude-opus, claude-sonnet
- *   - gemini-pro, gemini-flash, gemini-flash-lite
- *   - gpt-oss
+ * Parses the model IDs reported by Antigravity (fetchAvailableModels) into families
+ * (claude-opus, claude-sonnet, gemini-pro, gemini-flash, gemini-flash-lite, gpt-oss, ...)
+ * and resolves family/base aliases (e.g. `claude-opus`) to the newest native ID.
+ * Every model stays exposed; older generations are not filtered out.
  * The static list in config.ts is only used as a seed before the first sync.
  */
 
@@ -58,7 +56,7 @@ function toVersion(raw: string): number[] {
     return raw.split(/[-.]/).map(n => parseInt(n, 10))
 }
 
-function compareVersions(a: number[], b: number[]): number {
+export function compareVersions(a: number[], b: number[]): number {
     const len = Math.max(a.length, b.length)
     for (let i = 0; i < len; i++) {
         const diff = (a[i] ?? 0) - (b[i] ?? 0)
@@ -69,6 +67,7 @@ function compareVersions(a: number[], b: number[]): number {
 
 export function parseModelId(id: string): ParsedModel | null {
     const lower = id.trim().toLowerCase()
+    if (!lower || lower.endsWith("-disabled")) return null
 
     // Gemini Argon (e.g. gemini-4-argon, gemini-argon, argon)
     let m = lower.match(/^gemini-(?:(\d{1,2}(?:\.\d{1,2})?)-)?argon(?:-(high|medium|low|thinking))?$/)
@@ -100,7 +99,7 @@ export function parseModelId(id: string): ParsedModel | null {
     }
 
     // Claude (Opus / Sonnet), supporting -high, -medium, -low, -thinking
-    m = lower.match(/^claude-(opus|sonnet)-(\d{1,2}(?:[-.]\d{1,2})?)(?:-(thinking|high|medium|low))?$/)
+    m = lower.match(/^claude-(opus|sonnet)-(\d{1,2}(?:[-.]\d{1,2})?)(?:-(thinking|high|medium|low|extra-low|tiered|agent))?$/)
     if (m) {
         return {
             id,
@@ -111,23 +110,12 @@ export function parseModelId(id: string): ParsedModel | null {
     }
 
     // Gemini (Flash, Flash Lite, Pro)
-    m = lower.match(/^gemini-(\d{1,2}(?:\.\d{1,2})?)-(flash-lite|flash|pro)(?:-(high|medium|low|thinking))?$/)
+    m = lower.match(/^gemini-(\d{1,2}(?:\.\d{1,2})?)-(flash-lite|flash|pro)(?:-(high|medium|low|extra-low|thinking|tiered|agent))?$/)
     if (m) {
         return {
             id,
             family: `gemini-${m[2]}` as ModelFamily,
             version: toVersion(m[1]),
-            variant: m[3] || "",
-        }
-    }
-
-    // Gemini 4 Pro / Flash / etc. if formatted like gemini-4-pro or gemini-4-flash
-    m = lower.match(/^gemini-(\d{1,2})-(flash-lite|flash|pro)(?:-(high|medium|low|thinking))?$/)
-    if (m) {
-        return {
-            id,
-            family: `gemini-${m[2]}` as ModelFamily,
-            version: [parseInt(m[1], 10)],
             variant: m[3] || "",
         }
     }
@@ -139,6 +127,28 @@ export function parseModelId(id: string): ParsedModel | null {
     }
 
     return null
+}
+
+/** Antigravity quota buckets: each one is shared by a group of model families. */
+export type QuotaPool = "gemini" | "claude_gpt" | "argon"
+
+const FAMILY_QUOTA_POOL: Record<ModelFamily, QuotaPool> = {
+    "claude-opus": "claude_gpt",
+    "claude-sonnet": "claude_gpt",
+    "gpt-oss": "claude_gpt",
+    "gemini-argon": "argon",
+    "gemini-pro": "gemini",
+    "gemini-flash": "gemini",
+    "gemini-flash-lite": "gemini",
+}
+
+/** Which quota bucket a model draws from, or null for models outside the tracked families (images, internal, ...). */
+export function quotaPoolForModel(id: string): QuotaPool | null {
+    const lower = id.trim().toLowerCase()
+    if (lower === "argon") return "argon"
+    if (lower in FAMILY_QUOTA_POOL) return FAMILY_QUOTA_POOL[lower as ModelFamily] // bare family alias, e.g. "claude-opus"
+    const parsed = parseModelId(lower)
+    return parsed ? FAMILY_QUOTA_POOL[parsed.family] : null
 }
 
 function baseIdFor(family: ModelFamily, version: number[]): string {
@@ -155,6 +165,13 @@ function baseIdFor(family: ModelFamily, version: number[]): string {
             return `gemini-${version.join(".")}-${kind}`
         }
     }
+}
+
+/** Returns the canonical base model ID (without effort/thinking variant suffix) for a parsed model ID. */
+export function baseModelIdFor(id: string): string | null {
+    const parsed = parseModelId(id)
+    if (!parsed) return null
+    return baseIdFor(parsed.family, parsed.version)
 }
 
 function titleCase(s: string): string {
@@ -182,13 +199,19 @@ function labelFor(family: ModelFamily, version: number[], variant: string): stri
     return variant ? `${base} (${titleCase(variant)})` : base
 }
 
+function selectPreferredTarget(family: ModelFamily, group: ParsedModel[]): ParsedModel {
+    for (const variant of VARIANT_PREFERENCE[family]) {
+        const found = group.find(m => m.variant === variant)
+        if (found) return found
+    }
+    return group[0]
+}
+
 export interface AntigravityCatalog {
     /** Clean/unified IDs, e.g. claude-opus-5-5, gemini-3.8-flash */
     base: CatalogModel[]
-    /** Explicit native variants of the latest models (thinking/high/medium/low) */
+    /** Explicit native variants of the newest model of each family (thinking/high/medium/low) */
     variants: CatalogModel[]
-    /** Every ID/alias that is considered "latest" (base + variants) */
-    selectedIds: Set<string>
     /** alias/base ID -> native Antigravity model ID */
     aliases: Map<string, string>
 }
@@ -205,29 +228,34 @@ export function buildCatalog(ids: string[]): AntigravityCatalog {
 
     const base: CatalogModel[] = []
     const variants: CatalogModel[] = []
-    const selectedIds = new Set<string>()
     const aliases = new Map<string, string>()
 
     for (const family of FAMILIES) {
         const members = byFamily.get(family)
         if (!members || members.length === 0) continue
 
+        // Group members by version so older versions also register baseId -> preferredVariant aliases
+        const byVersion = new Map<string, ParsedModel[]>()
         let latest = members[0].version
         for (const member of members) {
             if (compareVersions(member.version, latest) > 0) latest = member.version
+            const vKey = member.version.join(".")
+            const vGroup = byVersion.get(vKey) || []
+            vGroup.push(member)
+            byVersion.set(vKey, vGroup)
         }
-        const current = members.filter(m => compareVersions(m.version, latest) === 0)
 
-        let target: ParsedModel | undefined
-        for (const variant of VARIANT_PREFERENCE[family]) {
-            target = current.find(m => m.variant === variant)
-            if (target) break
+        for (const vGroup of byVersion.values()) {
+            const ver = vGroup[0].version
+            const target = selectPreferredTarget(family, vGroup)
+            aliases.set(baseIdFor(family, ver), target.id)
         }
-        target = target || current[0]
+
+        const current = members.filter(m => compareVersions(m.version, latest) === 0)
+        const target = selectPreferredTarget(family, current)
 
         const baseId = baseIdFor(family, latest)
         base.push({ id: baseId, name: labelFor(family, latest, "") })
-        selectedIds.add(baseId)
         aliases.set(baseId, target.id)
         aliases.set(family, target.id) // stable alias, e.g. "claude-opus"
         if (family === "gemini-argon") {
@@ -235,14 +263,13 @@ export function buildCatalog(ids: string[]): AntigravityCatalog {
         }
 
         for (const member of current) {
-            selectedIds.add(member.id)
             if (member.id !== baseId) {
                 variants.push({ id: member.id, name: labelFor(family, latest, member.variant) })
             }
         }
     }
 
-    return { base, variants, selectedIds, aliases }
+    return { base, variants, aliases }
 }
 
 const STATIC_IDS = [...BASE_OFFICIAL_MODELS, ...THINKING_VARIANT_MODELS].map(m => m.id)
@@ -266,10 +293,4 @@ export function getAntigravityCatalog(): AntigravityCatalog {
 /** Resolves a base/family alias to the native Antigravity model ID, if known. */
 export function resolveAntigravityAlias(model: string): string | undefined {
     return getAntigravityCatalog().aliases.get(model)
-}
-
-export function isLatestAntigravityModel(id: string): boolean {
-    const catalog = getAntigravityCatalog()
-    // Models outside the six tracked families (images, tiered, ...) are never "latest"
-    return catalog.selectedIds.has(id)
 }

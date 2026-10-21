@@ -100,7 +100,7 @@ authRouter.post("/import", async (c) => {
             message: `Importato con successo ${importedCount} account.`
         })
     } catch (e) {
-        return c.json({ success: false, error: (e as Error).message || "Errore nella lettura del JSON" }, 400)
+        return c.json({ success: false, error: safeErrorMessage(e) || "Errore nella lettura del JSON" }, 400)
     }
 })
 

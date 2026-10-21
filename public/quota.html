@@ -612,15 +612,6 @@
                     <p class="text-xs text-gray-500 mt-0.5" data-i18n="api.filterPoliciesDesc">Configure which models are advertised on /v1/models</p>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <!-- Latest Only -->
-                    <label class="flex items-start justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 bg-gray-900/30 transition-colors cursor-pointer">
-                        <div class="pr-3">
-                            <div class="text-sm font-medium text-gray-200" data-i18n="api.latestOnly">Latest Models Only</div>
-                            <div class="text-xs text-gray-500 mt-1" data-i18n="api.latestOnlyDesc">Expose only the newest flagship model per family (3.8 Flash, 3.1 Pro, Sonnet 4.6), hiding older generations (2.5/3.6/3.7)</div>
-                        </div>
-                        <input type="checkbox" id="api-filter-latest-only" onchange="handleApiFilterChange('latestModelsOnly', this.checked)" class="toggle-switch mt-1 flex-shrink-0">
-                    </label>
-
                     <!-- Only Active Providers -->
                     <label class="flex items-start justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 bg-gray-900/30 transition-colors cursor-pointer">
                         <div class="pr-3">
@@ -1324,8 +1315,6 @@
                 'api.chatUrl': 'Chat Endpoint',
                 'api.filterPolicies': 'Exposure Filters',
                 'api.filterPoliciesDesc': 'Configure which models are advertised on /v1/models',
-                'api.latestOnly': 'Latest Models Only',
-                'api.latestOnlyDesc': 'Expose only the newest flagship model per family (3.8 Flash, 3.1 Pro, Sonnet 4.6), hiding older generations (2.5/3.6/3.7)',
                 'api.activeProvidersOnly': 'Active Providers Only',
                 'api.activeProvidersOnlyDesc': 'Hide providers without authenticated accounts (Copilot, Codex, Kiro, Grok)',
                 'api.separateThinking': 'Separate Thinking Models',
@@ -1336,7 +1325,6 @@
                 'api.statusExposed': 'Exposed',
                 'api.statusHidden': 'Hidden',
                 'api.badgeLatest': 'Latest',
-                'api.badgeLegacy': 'Legacy',
                 'api.badgeUnavailable': 'Unavailable',
                 'api.badgeThinking': 'Thinking',
                 'api.badgeBase': 'Base',
@@ -1525,8 +1513,6 @@
                 'api.chatUrl': '对话端点',
                 'api.filterPolicies': '暴露过滤规则',
                 'api.filterPoliciesDesc': '配置在 /v1/models 中展示哪些模型',
-                'api.latestOnly': '仅最新旗舰模型',
-                'api.latestOnlyDesc': '仅保留各系列最新旗舰模型（如 3.8 Flash、3.1 Pro、Sonnet 4.6），隐藏历史版本（2.5/3.6/3.7）',
                 'api.activeProvidersOnly': '仅已授权提供商',
                 'api.activeProvidersOnlyDesc': '隐藏未配置账号的提供商（如 Copilot、Codex、Kiro、Grok）',
                 'api.separateThinking': '独立Thinking模型',
@@ -1537,7 +1523,6 @@
                 'api.statusExposed': '已暴露',
                 'api.statusHidden': '已隐藏',
                 'api.badgeLatest': '最新',
-                'api.badgeLegacy': '旧版',
                 'api.badgeUnavailable': '不可用',
                 'api.badgeThinking': 'Thinking',
                 'api.badgeBase': '基础',
@@ -1726,8 +1711,6 @@
                 'api.chatUrl': 'Endpoint Chat',
                 'api.filterPolicies': 'Filtri di Visibilità',
                 'api.filterPoliciesDesc': 'Configura quali modelli vengono mostrati su /v1/models',
-                'api.latestOnly': 'Solo Modelli più Recenti per Famiglia',
-                'api.latestOnlyDesc': 'Espone solo il modello di punta attuale per ogni famiglia (3.8 Flash, 3.1 Pro, Sonnet 4.6), nascondendo le vecchie generazioni (2.5/3.6/3.7)',
                 'api.activeProvidersOnly': 'Solo Provider Attivi',
                 'api.activeProvidersOnlyDesc': 'Nasconde automaticamente i provider senza account autenticati (Copilot, Codex, Kiro, Grok)',
                 'api.separateThinking': 'Modelli Thinking Separati',
@@ -1738,7 +1721,6 @@
                 'api.statusExposed': 'Esposto',
                 'api.statusHidden': 'Nascosto',
                 'api.badgeLatest': 'Recente',
-                'api.badgeLegacy': 'Legacy',
                 'api.badgeUnavailable': 'Non disponibile',
                 'api.badgeThinking': 'Thinking',
                 'api.badgeBase': 'Base',
@@ -2500,9 +2482,6 @@
             if (!apiCatalogData) return;
             const { allAvailable, exposedIds, settings } = apiCatalogData;
 
-            const latestInput = document.getElementById('api-filter-latest-only');
-            if (latestInput) latestInput.checked = settings.latestModelsOnly !== false;
-
             const activeInput = document.getElementById('api-filter-active-providers');
             if (activeInput) activeInput.checked = settings.onlyActiveProviders !== false;
 
@@ -2537,13 +2516,11 @@
 
             container.innerHTML = '';
 
-            const showLatestOnly = settings.latestModelsOnly !== false;
             const showActiveProvidersOnly = settings.onlyActiveProviders !== false;
             const showSeparateThinking = !!settings.separateThinkingModels;
 
             const filtered = allAvailable.filter(m => {
                 if (showActiveProvidersOnly && !m.isProviderActive) return false;
-                if (showLatestOnly && m.isLegacy) return false;
                 if (!showSeparateThinking && m.isThinking) return false;
                 if (!searchTerm) return true;
                 return m.id.toLowerCase().includes(searchTerm) || m.name.toLowerCase().includes(searchTerm) || m.owned_by.toLowerCase().includes(searchTerm);
@@ -2568,8 +2545,6 @@
                 let catBadge = '';
                 if (m.isAvailable === false) {
                     catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium">${t('api.badgeUnavailable')}</span>`;
-                } else if (m.isLegacy) {
-                    catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">${t('api.badgeLegacy')}</span>`;
                 } else if (m.isThinking) {
                     catBadge = `<span class="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">${t('api.badgeThinking')}</span>`;
                 } else {

@@ -12,7 +12,7 @@ const GEMINI_31_MODELS = [
 
 test("Gemini 3.1 models stay configured and routable as legacy Antigravity models", () => {
     const configuredIds = new Set(AVAILABLE_MODELS.map(model => model.id))
-    const providerIds = new Set(getProviderModels("antigravity", { includeLegacy: true }).map(model => model.id))
+    const providerIds = new Set(getProviderModels("antigravity", { includeAllVariants: true }).map(model => model.id))
 
     for (const model of GEMINI_31_MODELS) {
         expect(configuredIds.has(model)).toBe(true)
@@ -20,7 +20,7 @@ test("Gemini 3.1 models stay configured and routable as legacy Antigravity model
     }
 })
 
-test("catalog keeps only the highest version of each family", () => {
+test("catalog resolves family aliases to the highest version", () => {
     const catalog = buildCatalog([
         "claude-opus-5-5-high",
         "claude-opus-5-5-medium",
@@ -52,8 +52,6 @@ test("catalog keeps only the highest version of each family", () => {
     expect(catalog.aliases.get("claude-sonnet-5-5")).toBe("claude-sonnet-5-5-medium")
     expect(catalog.aliases.get("gemini-pro")).toBe("gemini-3.1-pro-high")
     expect(catalog.aliases.get("gemini-flash")).toBe("gemini-3.8-flash-medium")
-    expect(catalog.selectedIds.has("claude-sonnet-4-6")).toBe(false)
-    expect(catalog.selectedIds.has("gemini-3.1-flash-image")).toBe(false)
 })
 
 test("Gemini 3.1 models map to the corresponding Antigravity proto enums", () => {
