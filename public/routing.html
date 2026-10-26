@@ -402,6 +402,21 @@
             min-height: 520px;
         }
 
+        @media (max-width: 1023px) {
+            body.iframe-mode {
+                overflow-y: auto !important;
+            }
+            .routing-panels {
+                height: auto !important;
+                min-height: 0 !important;
+                grid-template-columns: 1fr !important;
+            }
+            .routing-panels > aside,
+            .routing-panels > section {
+                max-height: 420px;
+            }
+        }
+
         .select-field {
             appearance: none;
             background-color: rgba(10, 10, 10, 0.8);
@@ -432,7 +447,7 @@
     </style>
 </head>
 
-<body class="min-h-screen p-6">
+<body class="min-h-screen p-3 sm:p-6 overflow-x-hidden">
     <script>
         // Immediately detect iframe before DOM renders
         if (window.self !== window.top) {
@@ -440,12 +455,12 @@
         }
     </script>
     <div class="max-w-7xl mx-auto space-y-6 main-container">
-        <header class="flex items-center justify-between">
+        <header class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-                <h1 class="text-3xl font-bold text-gray-200" data-i18n="routing.title">Routing</h1>
-                <p class="text-sm text-gray-500 mt-1 font-bold" data-i18n="routing.subtitle">Build reliability chains with cooldown-aware failover for authorized accounts</p>
+                <h1 class="text-2xl sm:text-3xl font-bold text-gray-200" data-i18n="routing.title">Routing</h1>
+                <p class="text-xs sm:text-sm text-gray-500 mt-1 font-bold" data-i18n="routing.subtitle">Build reliability chains with cooldown-aware failover for authorized accounts</p>
             </div>
-            <div class="flex items-center gap-4">
+            <div class="flex flex-wrap items-center gap-2 sm:gap-4">
                 <div class="flex items-center gap-2 text-xs">
                     <button id="tab-flow" onclick="setRoutingTab('flow')"
                         class="action-btn px-3 py-2 rounded-lg font-bold text-gray-300">
@@ -535,13 +550,13 @@
                 <div id="account-model-list" class="space-y-2 flex-1 min-h-0 overflow-y-auto panel-scroll"></div>
             </aside>
 
-            <section class="panel rounded-2xl p-6 flex flex-col min-h-0">
-                <div class="flex items-start justify-between gap-3 mb-4 flex-shrink-0">
+            <section class="panel rounded-2xl p-4 sm:p-6 flex flex-col min-h-0">
+                <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4 flex-shrink-0">
                     <div>
                         <h2 class="text-sm uppercase tracking-[0.2em] text-gray-500" data-i18n="routing.accountChain">Account Chain</h2>
                         <p class="text-xs text-gray-600 mt-1" data-i18n="routing.accountChainDesc">Ordered provider/account fallback.</p>
                     </div>
-                    <div class="flex items-center gap-3 text-xs text-gray-400">
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-gray-400">
                         <label class="flex items-center gap-2 cursor-pointer" title="Mostra modelli con thinking separati (-low, -high, -thinking) in /v1/models">
                             <input id="separate-thinking-switch" type="checkbox" class="toggle-switch">
                             <span>Separate Thinking</span>
@@ -560,7 +575,7 @@
 
                 <div id="account-route-title" class="text-sm text-gray-400 mb-3 flex-shrink-0" data-i18n="routing.selectModel">Select a model</div>
 
-                <div class="grid gap-3 mb-4 flex-shrink-0" style="grid-template-columns: 1fr 1fr auto;">
+                <div class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 sm:gap-3 mb-4 flex-shrink-0">
                     <select id="account-provider-select" class="select-field w-full">
                         <option value="" data-i18n="routing.provider">Provider</option>
                     </select>

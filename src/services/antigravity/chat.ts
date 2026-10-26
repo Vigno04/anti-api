@@ -1082,7 +1082,8 @@ async function sendRequestSse(
                         }
 
                         if (allowRotation && accountManager.count() > 1) {
-                            const next = await accountManager.getNextAvailableAccount(true, sessionKey)
+                            const isEligible = modelName ? (id: string) => isAntigravityModelSupportedForAccount(id, modelName) !== false : undefined
+                            const next = await accountManager.getNextAvailableAccount(true, sessionKey, isEligible, modelName)
                             if (next && next.accountId !== currentAccountId) {
                                 currentAccessToken = next.accessToken
                                 currentAccountId = next.accountId
@@ -1097,7 +1098,8 @@ async function sendRequestSse(
                         const cooldownMs = Math.max(boundedDelayMs, NON_QUOTA_429_COOLDOWN_MS)
                         accountManager.markRateLimited(currentAccountId, cooldownMs)
                         if (allowRotation && accountManager.count() > 1) {
-                            const next = await accountManager.getNextAvailableAccount(true, sessionKey)
+                            const isEligible = modelName ? (id: string) => isAntigravityModelSupportedForAccount(id, modelName) !== false : undefined
+                            const next = await accountManager.getNextAvailableAccount(true, sessionKey, isEligible, modelName)
                             if (next && next.accountId !== currentAccountId) {
                                 currentAccessToken = next.accessToken
                                 currentAccountId = next.accountId
@@ -1130,7 +1132,8 @@ async function sendRequestSse(
                     }
                     // If refresh failed, try next account
                     if (allowRotation && accountManager.count() > 1) {
-                        const next = await accountManager.getNextAvailableAccount(true, sessionKey)
+                        const isEligible = modelName ? (id: string) => isAntigravityModelSupportedForAccount(id, modelName) !== false : undefined
+                        const next = await accountManager.getNextAvailableAccount(true, sessionKey, isEligible, modelName)
                         if (next && next.accountId !== currentAccountId) {
                             currentAccessToken = next.accessToken
                             currentAccountId = next.accountId
@@ -1306,7 +1309,8 @@ async function* sendRequestSseStreaming(
                         const cooldownMs = Math.max(waitMs, NON_QUOTA_429_COOLDOWN_MS)
                         accountManager.markRateLimited(currentAccountId, cooldownMs)
                         if (allowRotation && accountManager.count() > 1) {
-                            const next = await accountManager.getNextAvailableAccount(true, sessionKey)
+                            const isEligible = modelName ? (id: string) => isAntigravityModelSupportedForAccount(id, modelName) !== false : undefined
+                            const next = await accountManager.getNextAvailableAccount(true, sessionKey, isEligible, modelName)
                             if (next && next.accountId !== currentAccountId) {
                                 currentAccessToken = next.accessToken
                                 currentAccountId = next.accountId
@@ -1501,7 +1505,8 @@ function extractSseEventData(event: string): string | null {
 async function resolveAntigravityAccount(
     modelName: string,
     sessionKey: string,
-    options: { accountId?: string; routeTag?: string }
+    options: { accountId?: string; routeTag?: string },
+    messages?: unknown
 ): Promise<{
     accessToken: string
     accountId?: string
@@ -1525,7 +1530,7 @@ async function resolveAntigravityAccount(
         accountEmail = account.email
     } else {
         const isEligible = (id: string) => isAntigravityModelSupportedForAccount(id, modelName) !== false
-        const account = await accountManager.getNextAvailableAccount(false, sessionKey, isEligible)
+        const account = await accountManager.getNextAvailableAccount(false, sessionKey, isEligible, modelName, messages)
         if (account) {
             accessToken = account.accessToken
             accountId = account.accountId
@@ -1542,14 +1547,20 @@ async function resolveAntigravityAccount(
     return { accessToken, accountId, projectId, accountEmail, releaseAccountLock }
 }
 
-function recordAntigravityUsage(accountId: string | undefined, modelName: string, totalInputTokens: number, outputTokens: number): void {
-    if (totalInputTokens <= 0 && outputTokens <= 0) return
-    if (accountId) {
-        accountManager.recordAccountUsage(accountId, totalInputTokens + outputTokens)
-    }
+function recordAntigravityUsage(
+    accountId: string | undefined,
+    modelName: string,
+    uncachedInputTokens: number,
+    outputTokens: number,
+    cacheReadTokens: number = 0
+): void {
+    if (uncachedInputTokens <= 0 && outputTokens <= 0 && cacheReadTokens <= 0) return
     const actualModelId = getAntigravityModelName(modelName)
+    if (accountId) {
+        accountManager.recordAccountUsage(accountId, uncachedInputTokens, outputTokens, cacheReadTokens, actualModelId)
+    }
     import("~/services/usage-tracker").then(({ recordUsage }) => {
-        recordUsage(actualModelId, totalInputTokens, outputTokens)
+        recordUsage(actualModelId, uncachedInputTokens, outputTokens, cacheReadTokens)
     }).catch(() => { })
 }
 
@@ -1565,7 +1576,8 @@ export async function createChatCompletionWithOptions(
     const { accessToken, accountId, projectId, accountEmail, releaseAccountLock } = await resolveAntigravityAccount(
         request.model,
         sessionKey,
-        options
+        options,
+        request.messages
     )
 
     setRequestLogContext({ model: request.model, provider: "antigravity", account: accountEmail, routeTag: options.routeTag })
@@ -1596,9 +1608,10 @@ export async function createChatCompletionWithOptions(
         const rawResponse = sseChunks.length > 0 ? JSON.stringify(sseChunks) : rawSse
 
         const result = parseApiResponse(rawResponse, sessionKey, request.model)
-        const inputTokens = (result.usage?.inputTokens || 0) + (result.usage?.cacheReadTokens || 0)
+        const uncachedInputTokens = result.usage?.inputTokens || 0
+        const cacheReadTokens = result.usage?.cacheReadTokens || 0
         const outputTokens = result.usage?.outputTokens || 0
-        recordAntigravityUsage(accountId, request.model, inputTokens, outputTokens)
+        recordAntigravityUsage(accountId, request.model, uncachedInputTokens, outputTokens, cacheReadTokens)
 
         return result
     } finally {
@@ -1618,7 +1631,8 @@ export async function* createChatCompletionStreamWithOptions(
     const { accessToken, accountId, projectId, releaseAccountLock } = await resolveAntigravityAccount(
         request.model,
         sessionKey,
-        options
+        options,
+        request.messages
     )
 
     try {
@@ -1744,7 +1758,7 @@ export async function* createChatCompletionStreamWithOptions(
         })
         yield buildMessageStop()
 
-        recordAntigravityUsage(accountId, request.model, streamInputTokens + streamCacheReadTokens, outputTokens)
+        recordAntigravityUsage(accountId, request.model, streamInputTokens, outputTokens, streamCacheReadTokens)
     } finally {
         if (releaseAccountLock) releaseAccountLock()
     }

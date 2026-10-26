@@ -102,8 +102,17 @@ export function getSetting<K extends keyof AppSettings>(key: K): AppSettings[K] 
 }
 
 export function isCacheAwareRoutingEnabled(): boolean {
-    if (process.env.ANTI_API_CACHE_AWARE_ROUTING === "1" || process.env.ANTI_API_ACCOUNT_STRATEGY === "cache_aware") {
+    if (
+        process.env.ANTI_API_CACHE_AWARE_ROUTING === "1" ||
+        process.env.ANTI_API_INTELLIGENT_ROUTING === "1" ||
+        process.env.ANTI_API_ACCOUNT_STRATEGY === "cache_aware" ||
+        process.env.ANTI_API_ACCOUNT_STRATEGY === "intelligent"
+    ) {
         return true
     }
     return loadSettings().cacheAwareRouting ?? false
+}
+
+export function isIntelligentRoutingEnabled(): boolean {
+    return isCacheAwareRoutingEnabled()
 }

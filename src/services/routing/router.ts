@@ -5,6 +5,7 @@ import {
     createChatCompletionStreamWithOptions,
     isAntigravityModelSupportedForAccount,
     markAntigravityModelUnsupported,
+    computeSessionKey,
 } from "~/services/antigravity/chat"
 import { accountManager } from "~/services/antigravity/account-manager"
 import { createCodexCompletion, isCodexModelSupportedForAccount, isCodexUnsupportedModelError } from "~/services/codex/chat"
@@ -16,6 +17,12 @@ import { authStore } from "~/services/auth/store"
 import { AUTH_PROVIDERS, type ProviderAccount, type AuthProvider } from "~/services/auth/types"
 import { loadRoutingConfig, type RoutingEntry, type RoutingConfig, type AccountRoutingEntry } from "./config"
 import { getProviderModels, isHiddenCodexModel } from "./models"
+import { isCacheAwareRoutingEnabled } from "~/services/settings"
+import {
+    rankAccountCandidates,
+    recordIntelligentDispatch,
+    recordIntelligentTokenUsage,
+} from "./intelligent-scorer"
 import {
     buildMessageStart,
     buildContentBlockStart,
@@ -128,12 +135,22 @@ export function normalizeOfficialModelId(model: string): string {
  * versus `claude-sonnet-4-5`). Keep the public/request model untouched, but
  * use the same key while deciding which provider or account route applies.
  */
+const officialModelKeyCache = new Map<string, string>()
+
 function officialModelKey(model: string): string {
-    return normalizeOfficialModelId(model || "")
+    const raw = model || ""
+    const cached = officialModelKeyCache.get(raw)
+    if (cached !== undefined) return cached
+    const computed = normalizeOfficialModelId(raw)
         .trim()
         .toLowerCase()
         .replace(/[._]/g, "-")
         .replace(/-+/g, "-")
+    if (officialModelKeyCache.size > 1000) {
+        officialModelKeyCache.clear()
+    }
+    officialModelKeyCache.set(raw, computed)
+    return computed
 }
 
 export function modelIdsMatch(left: string, right: string): boolean {
@@ -214,9 +231,7 @@ function getOfficialModelProviders(model: string): AuthProvider[] {
 }
 
 function isOfficialModel(model: string): boolean {
-    if (getOfficialModelProviders(model).length > 0) return true
-    const normalized = normalizeOfficialModelId(model)
-    return normalized !== model && getOfficialModelProviders(normalized).length > 0
+    return getOfficialModelProviders(model).length > 0
 }
 
 function normalizeEntries(entries: RoutingEntry[]): RoutingEntry[] {
@@ -539,12 +554,26 @@ function advanceFlowCursor(flowState: StickyCursorState | null, entries: Routing
     }
 }
 
-function recordProviderUsage(modelId: string, completion: ProviderCompletion | null | undefined): void {
+function recordProviderUsage(
+    modelId: string,
+    completion: ProviderCompletion | null | undefined,
+    provider?: string,
+    accountId?: string
+): void {
     if (!completion?.usage) return
     const inputTokens = completion.usage.inputTokens ?? 0
+    const cacheReadTokens = completion.usage.cacheReadTokens ?? 0
     const outputTokens = completion.usage.outputTokens ?? 0
-    if (inputTokens > 0 || outputTokens > 0) {
-        recordUsage(modelId, inputTokens, outputTokens)
+    if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
+        recordUsage(modelId, inputTokens, outputTokens, cacheReadTokens)
+        if (provider && accountId) {
+            recordIntelligentTokenUsage(provider, accountId, {
+                uncachedInputTokens: inputTokens,
+                outputTokens,
+                cacheReadTokens,
+                model: modelId,
+            })
+        }
     }
 }
 
@@ -744,16 +773,61 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
     throw new RoutingError("No routing entries available", 400)
 }
 
-async function createAccountCompletionWithEntries(request: RoutedRequest, entries: AccountRoutingEntry[]) {
-    let lastError: Error | null = null
+function orderAccountEntriesForRequest(
+    entries: AccountRoutingEntry[],
+    request: RoutedRequest,
+    useIntelligentRouting: boolean
+): {
+    orderedEntries: Array<{ entry: AccountRoutingEntry; originalIndex: number }>
+    sessionKey?: string
+    accountState: StickyCursorState
+} {
     const accountState = getStickyCursorState(accountStickyStates, request.model || "", entries.length)
     const startIndex = accountState.cursor
+    const sessionKey =
+        typeof computeSessionKey === "function" && Array.isArray(request.messages) && request.messages.length > 0
+            ? computeSessionKey(request.messages)
+            : undefined
+
+    if (useIntelligentRouting && entries.length > 1) {
+        const ranked = rankAccountCandidates(entries, {
+            model: request.model,
+            sessionKey,
+            isInFlight: (id) => accountManager.isAccountInFlight?.(id) ?? false,
+            getConsecutiveFailures: (id) => accountManager.getAccount?.(id)?.consecutiveFailures ?? 0,
+            getTotalTokens: (id) => accountManager.getAccountUsage?.(id) ?? 0,
+            messages: request.messages,
+        })
+        return {
+            orderedEntries: ranked.map((r) => ({ entry: r.entry, originalIndex: r.originalIndex })),
+            sessionKey,
+            accountState,
+        }
+    }
+
+    const orderedEntries: Array<{ entry: AccountRoutingEntry; originalIndex: number }> = []
+    for (let offset = 0; offset < entries.length; offset++) {
+        const index = (startIndex + offset) % entries.length
+        orderedEntries.push({ entry: entries[index], originalIndex: index })
+    }
+    return { orderedEntries, sessionKey, accountState }
+}
+
+async function createAccountCompletionWithEntries(
+    request: RoutedRequest,
+    entries: AccountRoutingEntry[],
+    useIntelligentRouting: boolean = false
+) {
+    let lastError: Error | null = null
+    const { orderedEntries, sessionKey, accountState } = orderAccountEntriesForRequest(
+        entries,
+        request,
+        useIntelligentRouting
+    )
     let inFlightEntry: { entry: AccountRoutingEntry; index: number } | null = null
     let hasRateLimited = false
 
-    for (let offset = 0; offset < entries.length; offset++) {
-        const index = (startIndex + offset) % entries.length
-        const entry = entries[index]
+    for (const { entry, originalIndex: index } of orderedEntries) {
         try {
             if (entry.provider === "antigravity") {
                 if (entry.accountId === "auto") {
@@ -779,6 +853,9 @@ async function createAccountCompletionWithEntries(request: RoutedRequest, entrie
                     allowRotation: false,
                     routeTag: "ar",
                 })
+                if (useIntelligentRouting) {
+                    recordIntelligentDispatch("antigravity", entry.accountId, sessionKey, request.model)
+                }
                 accountState.cursor = index
                 return result
             }
@@ -805,7 +882,10 @@ async function createAccountCompletionWithEntries(request: RoutedRequest, entrie
 
             const startTime = Date.now()
             const result = await createHostedProviderCompletion(entry.provider, account, request.model, request)
-            recordProviderUsage(request.model, result)
+            recordProviderUsage(request.model, result, entry.provider, entry.accountId)
+            if (useIntelligentRouting) {
+                recordIntelligentDispatch(entry.provider, entry.accountId, sessionKey, request.model)
+            }
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
             console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" }))
             accountState.cursor = index
@@ -828,6 +908,9 @@ async function createAccountCompletionWithEntries(request: RoutedRequest, entrie
             allowRotation: false,
             routeTag: "ar",
         })
+        if (useIntelligentRouting) {
+            recordIntelligentDispatch("antigravity", entry.accountId, sessionKey, request.model)
+        }
         accountState.cursor = index
         return result
     }
@@ -861,7 +944,8 @@ export async function createRoutedCompletion(request: RoutedRequest) {
     }
     if (isOfficialModel(normalizedModel)) {
         const accountEntries = resolveAccountRoutingEntries(config, normalizedModel)
-        return createAccountCompletionWithEntries(normalizedRequest, accountEntries)
+        const useIntelligent = isCacheAwareRoutingEnabled() || (config.accountRouting?.smartSwitch ?? false)
+        return createAccountCompletionWithEntries(normalizedRequest, accountEntries, useIntelligent)
     }
 
     const flowSelection = resolveFlowSelection(config, normalizedRequest.model)
@@ -939,16 +1023,21 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
     throw new RoutingError("No routing entries available", 400)
 }
 
-async function* createAccountCompletionStreamWithEntries(request: RoutedRequest, entries: AccountRoutingEntry[]): AsyncGenerator<string, void, unknown> {
+async function* createAccountCompletionStreamWithEntries(
+    request: RoutedRequest,
+    entries: AccountRoutingEntry[],
+    useIntelligentRouting: boolean = false
+): AsyncGenerator<string, void, unknown> {
     let lastError: Error | null = null
-    const accountState = getStickyCursorState(accountStickyStates, request.model || "", entries.length)
-    const startIndex = accountState.cursor
+    const { orderedEntries, sessionKey, accountState } = orderAccountEntriesForRequest(
+        entries,
+        request,
+        useIntelligentRouting
+    )
     let inFlightEntry: { entry: AccountRoutingEntry; index: number } | null = null
     let hasRateLimited = false
 
-    for (let offset = 0; offset < entries.length; offset++) {
-        const index = (startIndex + offset) % entries.length
-        const entry = entries[index]
+    for (const { entry, originalIndex: index } of orderedEntries) {
         try {
             if (entry.provider === "antigravity") {
                 if (entry.accountId === "auto") {
@@ -974,6 +1063,9 @@ async function* createAccountCompletionStreamWithEntries(request: RoutedRequest,
                     allowRotation: false,
                     routeTag: "ar",
                 })
+                if (useIntelligentRouting) {
+                    recordIntelligentDispatch("antigravity", entry.accountId, sessionKey, request.model)
+                }
                 accountState.cursor = index
                 return
             }
@@ -1005,7 +1097,10 @@ async function* createAccountCompletionStreamWithEntries(request: RoutedRequest,
             }
 
             yield* emitHostedCompletionAsSse(request.model, completion)
-            recordProviderUsage(request.model, completion)
+            recordProviderUsage(request.model, completion, entry.provider, entry.accountId)
+            if (useIntelligentRouting) {
+                recordIntelligentDispatch(entry.provider, entry.accountId, sessionKey, request.model)
+            }
 
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
             console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" }))
@@ -1029,6 +1124,9 @@ async function* createAccountCompletionStreamWithEntries(request: RoutedRequest,
             allowRotation: false,
             routeTag: "ar",
         })
+        if (useIntelligentRouting) {
+            recordIntelligentDispatch("antigravity", entry.accountId, sessionKey, request.model)
+        }
         accountState.cursor = index
         return
     }
@@ -1054,7 +1152,8 @@ export async function* createRoutedCompletionStream(request: RoutedRequest): Asy
 
     if (isOfficialModel(normalizedModel)) {
         const accountEntries = resolveAccountRoutingEntries(config, normalizedModel)
-        yield* createAccountCompletionStreamWithEntries(normalizedRequest, accountEntries)
+        const useIntelligent = isCacheAwareRoutingEnabled() || (config.accountRouting?.smartSwitch ?? false)
+        yield* createAccountCompletionStreamWithEntries(normalizedRequest, accountEntries, useIntelligent)
         return
     }
 

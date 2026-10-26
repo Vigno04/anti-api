@@ -20,18 +20,25 @@ import { getDataDir } from "~/lib/data-dir"
 import { fetchZedAccountOverview } from "~/services/zed/chat"
 import { safeErrorMessage } from "~/lib/redaction"
 import { setDynamicAntigravityModelsForAccount } from "~/services/routing/models"
+import {
+    enrichBarsWithValueEstimates,
+    registerQuotaRefreshTrigger,
+    syncIntelligentQuotaCache,
+} from "~/services/routing/intelligent-scorer"
 
 type ModelInfo = AntigravityModelInfo
 
-type AccountBar = {
+export type AccountBar = {
     key: string
     label: string
     percentage: number
     resetTime?: string
     disabled?: boolean
+    estimatedValueUsd?: number
+    valuePerPercentUsd?: number
 }
 
-type QuotaProvider = "antigravity" | "codex" | "copilot" | "zed" | "kiro"
+export type QuotaProvider = "antigravity" | "codex" | "copilot" | "zed" | "kiro"
 
 export type AccountQuotaView = {
     provider: QuotaProvider
@@ -72,6 +79,11 @@ function loadQuotaCache(): void {
         if (!existsSync(QUOTA_CACHE_FILE)) return
         const raw = JSON.parse(readFileSync(QUOTA_CACHE_FILE, "utf-8")) as Record<string, QuotaCacheEntry>
         quotaCache = new Map(Object.entries(raw))
+        for (const entry of quotaCache.values()) {
+            if (entry && Array.isArray(entry.bars)) {
+                syncIntelligentQuotaCache(entry.provider, entry.accountId, entry.bars, entry.updatedAt)
+            }
+        }
     } catch {
         quotaCache = new Map()
     }
@@ -99,6 +111,7 @@ function updateQuotaCache(entry: QuotaCacheEntry): void {
         entry.models = existing.models
     }
     quotaCache.set(getCacheKey(entry.provider, entry.accountId), entry)
+    syncIntelligentQuotaCache(entry.provider, entry.accountId, entry.bars, entry.updatedAt)
     saveQuotaCache()
 }
 
@@ -256,8 +269,59 @@ export async function getAggregatedQuota(): Promise<{
 
     return {
         timestamp: new Date().toISOString(),
-        accounts: [...antigravity, ...codex, ...copilot, ...zed, ...kiro],
+        accounts: [...antigravity, ...codex, ...copilot, ...zed, ...kiro].map(acc => ({
+            ...acc,
+            bars: enrichBarsWithValueEstimates(acc.provider, acc.accountId, acc.bars),
+        })),
     }
+}
+
+/**
+ * Proactively refresh quota for a single account in the background (e.g., when a known
+ * resetTime passes, when reset is imminent, or when live depletion crosses the threshold).
+ */
+export async function refreshAccountQuotaInBackground(
+    provider: string,
+    accountId: string
+): Promise<AccountQuotaView | null> {
+    loadQuotaCache()
+    const cleanId = accountId.trim().startsWith(`${provider}:`)
+        ? accountId.trim().slice(provider.length + 1)
+        : accountId.trim()
+    const account = authStore.getAccount(provider as any, cleanId)
+    if (!account) return null
+
+    try {
+        if (provider === "antigravity") {
+            const views = await fetchAntigravityQuotas([account])
+            return views[0] || null
+        }
+        if (provider === "codex") {
+            const views = await fetchCodexQuotas([account])
+            return views[0] || null
+        }
+        if (provider === "copilot") {
+            const views = await fetchCopilotQuotas([account])
+            return views[0] || null
+        }
+        if (provider === "zed") {
+            const views = await fetchZedQuotas([account])
+            return views[0] || null
+        }
+        if (provider === "kiro") {
+            const views = await fetchKiroQuotas([account])
+            return views[0] || null
+        }
+    } catch {
+        // Best-effort background refresh
+    }
+    return null
+}
+
+if (process.env.NODE_ENV !== "test") {
+    registerQuotaRefreshTrigger((provider, accountId) => {
+        void refreshAccountQuotaInBackground(provider, accountId)
+    })
 }
 
 async function fetchAntigravityQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {

@@ -333,17 +333,23 @@
             left: 22px;
             background: white;
         }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @media (max-width: 640px) {
+            .tab-btn { padding: 0.45rem 0.75rem !important; font-size: 0.75rem !important; white-space: nowrap; flex-shrink: 0; }
+            #log-view { height: 360px !important; }
+        }
     </style>
 </head>
 
-<body class="min-h-screen p-6">
+<body class="min-h-screen p-3 sm:p-6 overflow-x-hidden">
     <div id="loading-screen" class="loading-screen">
         <div class="loading-spinner"></div>
     </div>
     <!-- Main Content -->
     <div class="max-w-6xl mx-auto">
         <!-- Tab Navigation -->
-        <div class="flex items-center gap-1 mb-6">
+        <div class="flex items-center gap-1.5 mb-5 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
             <button onclick="switchTab('quota')" id="tab-quota"
                 class="tab-btn px-5 py-2 rounded-lg font-bold text-sm transition-all duration-200 text-white bg-gradient-to-r from-cyan-500/30 to-blue-500/30 border border-cyan-500/50">
                 <span data-i18n="nav.quota">Quota</span>
@@ -376,19 +382,19 @@
 
         <!-- Toast -->
         <div id="copy-toast"
-            class="fixed bottom-32 right-8 bg-gray-800 text-gray-300 px-4 py-2 rounded-lg text-sm opacity-0 translate-x-8 transition-all duration-300 pointer-events-none z-50">
+            class="fixed bottom-6 right-4 sm:bottom-32 sm:right-8 bg-gray-800 text-gray-300 px-4 py-2 rounded-lg text-sm opacity-0 translate-x-8 transition-all duration-300 pointer-events-none z-50 max-w-[90vw] truncate">
             <span data-i18n="toast.copied">Copied!</span></div>
 
         <!-- ==================== QUOTA TAB ==================== -->
         <div id="tab-content-quota" class="tab-content">
             <!-- Quota Header -->
-            <div class="mb-6 flex items-start justify-between">
+            <div class="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
                     <h1 class="text-3xl font-bold text-gray-300" data-i18n="quota.title">Quota</h1>
                     <p id="plan-info" class="text-gray-500 text-sm font-bold mt-1" data-i18n="common.loading">Loading...</p>
                 </div>
-                <div class="flex flex-col items-end gap-2">
-                    <div class="flex items-center gap-3">
+                <div class="flex flex-col items-start sm:items-end gap-2 w-full sm:w-auto">
+                    <div class="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         <div class="refresh-btn inline-block">
                             <button onclick="openDiagnosticsModal()" id="diagnostics-btn"
                                 class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm">
@@ -408,7 +414,7 @@
                             </button>
                         </div>
                     </div>
-                    <p id="last-updated" class="text-gray-600 text-xs text-right"></p>
+                    <p id="last-updated" class="text-gray-600 text-xs text-left sm:text-right"></p>
                 </div>
             </div>
 
@@ -429,7 +435,7 @@
             <!-- Quota Grid -->
             <div id="quota-grid" class="space-y-6">
                 <!-- Loading placeholder -->
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                     <div class="card-3d">
                         <div class="card-inner rounded-lg p-4 animate-pulse">
                             <div class="h-3 bg-gray-800 rounded w-1/2 mb-3"></div>
@@ -442,7 +448,7 @@
 
         <!-- ==================== USAGE TAB ==================== -->
         <div id="tab-content-usage" class="tab-content hidden">
-            <div class="mb-8 flex items-start justify-between">
+            <div class="mb-6 sm:mb-8 flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h1 class="text-3xl font-bold text-gray-300" data-i18n="usage.title">Usage Statistics</h1>
                     <p class="text-gray-500 text-sm mt-1 font-bold" data-i18n="usage.subtitle">Token consumption and estimated cost</p>
@@ -488,7 +494,7 @@
                 <div class="text-sm font-bold text-gray-300 mb-4" data-i18n="usage.modelDistribution">Model Distribution</div>
                 <div class="flex flex-col md:flex-row md:items-center gap-10 py-4">
                     <!-- Chart on left -->
-                    <div class="flex-shrink-0 ml-4" style="width: 240px; height: 240px;">
+                    <div class="flex-shrink-0 mx-auto md:ml-4" style="width: 220px; height: 220px;">
                         <canvas id="model-chart"></canvas>
                     </div>
                     <!-- Model details on right -->
@@ -513,7 +519,7 @@
 
         <!-- ==================== LOGS TAB ==================== -->
         <div id="tab-content-logs" class="tab-content hidden">
-            <div class="mb-6 flex items-start justify-between">
+            <div class="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
                     <h1 class="text-2xl font-bold text-gray-300" data-i18n="logs.title">Logs</h1>
                     <p class="text-gray-500 text-sm font-bold mt-1" data-i18n="logs.subtitle">Live server output (recent lines only)</p>
@@ -639,9 +645,9 @@
                         <h2 class="text-lg font-bold text-gray-200" data-i18n="api.catalogTitle">Models Catalog</h2>
                         <p id="api-stats-text" class="text-xs text-gray-500 mt-0.5" data-i18n="api.catalogDesc">Real-time overview of available models and exposure status</p>
                     </div>
-                    <div class="flex items-center gap-3">
+                    <div class="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         <input type="text" id="api-model-search" oninput="filterApiModelsList()" placeholder="Search models..." data-i18n-placeholder="api.searchPlaceholder"
-                            class="bg-black/50 border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-300 placeholder-gray-600 outline-none focus:border-cyan-500/50 w-64">
+                            class="bg-black/50 border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-300 placeholder-gray-600 outline-none focus:border-cyan-500/50 w-full sm:w-64">
                     </div>
                 </div>
 
@@ -744,8 +750,8 @@
                     <label
                         class="flex items-center justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 transition-colors cursor-pointer">
                         <div>
-                            <div class="text-gray-200 font-medium" data-i18n="settings.cacheAwareRouting">Cache-Aware Routing</div>
-                            <div class="text-gray-500 text-xs mt-0.5" data-i18n="settings.cacheAwareRoutingDesc">Stick same chat to the same account for 100% prompt cache hits; distribute new chats to least used account</div>
+                            <div class="text-gray-200 font-medium" data-i18n="settings.cacheAwareRouting">Intelligent Routing</div>
+                            <div class="text-gray-500 text-xs mt-0.5" data-i18n="settings.cacheAwareRoutingDesc">Prioritize accounts nearing quota reset, preserve warm prompt cache, and balance load when scores are close</div>
                         </div>
                         <input type="checkbox" id="setting-cache-aware-routing" class="toggle-switch">
                     </label>
@@ -851,7 +857,7 @@
     <!-- Account Options & Egress Proxy Modal -->
     <div id="account-options-modal"
         class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
-        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-lg p-6 text-gray-200 shadow-2xl space-y-4">
+        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-lg p-4 sm:p-6 max-h-[90vh] overflow-y-auto text-gray-200 shadow-2xl space-y-4">
             <div class="flex items-center justify-between pb-3 border-b border-[#2f253f]">
                 <div class="flex items-center gap-3">
                     <div id="acc-modal-logo" class="flex-shrink-0"></div>
@@ -905,7 +911,7 @@
                 </div>
             </div>
 
-            <div class="flex items-center justify-between pt-3 border-t border-[#2f253f]">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-[#2f253f]">
                 <div class="flex items-center gap-2">
                     <button type="button" onclick="pingFromAccountModal()" class="text-xs text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-1">
                         <span>📡 Test Latency</span>
@@ -934,7 +940,7 @@
     <!-- Diagnostics Modal -->
     <div id="diagnostics-modal"
         class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50">
-        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-4xl p-6 text-gray-200 max-h-[82vh] flex flex-col">
+        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-4xl p-4 sm:p-6 mx-3 text-gray-200 max-h-[88vh] flex flex-col">
             <div class="flex items-center justify-between mb-4 flex-shrink-0">
                 <div>
                     <h2 class="text-lg font-bold" data-i18n="diagnostics.title">Account Diagnostics</h2>
@@ -997,7 +1003,7 @@
     <!-- Add Account Modal -->
     <div id="add-account-modal"
         class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50">
-        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-3xl p-6 text-gray-200">
+        <div class="bg-[#111111] border border-[#2f253f] rounded-2xl w-full max-w-3xl p-4 sm:p-6 mx-3 max-h-[90vh] overflow-y-auto text-gray-200">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-bold" data-i18n="quota.addAccountTitle">Add Account</h2>
                 <button onclick="closeAddAccountModal()" class="text-gray-500 hover:text-gray-300">✕</button>
@@ -1131,7 +1137,7 @@
                 </div>
                 <div class="space-y-1.5 pt-1">
                     <label class="block text-xs font-semibold text-gray-300"><strong>2.</strong> Incolla qui il codice (o l'URL):</label>
-                    <div class="flex gap-2">
+                    <div class="flex flex-col sm:flex-row gap-2">
                         <input id="antigravity-code-input" type="text" placeholder="es. 4/0Abc... oppure https://antigravity.google/oauth-callback?code=..."
                             class="flex-1 bg-[#16161a] border border-[#2f253f] focus:border-cyan-500 focus:outline-none rounded-xl px-3.5 py-2 text-xs text-gray-100 font-mono placeholder-gray-600 transition-colors" />
                         <button id="antigravity-submit-btn" onclick="submitAntigravityCode()"
@@ -1263,8 +1269,8 @@
                 'settings.optimizeSortDesc': 'Sort cards by remaining quota within each provider',
                 'settings.autoRestart': 'Auto Restart (Watchdog)',
                 'settings.autoRestartDesc': 'Restart server automatically after a crash',
-                'settings.cacheAwareRouting': 'Cache-Aware Routing',
-                'settings.cacheAwareRoutingDesc': 'Stick same chat to the same account for 100% prompt cache hits; distribute new chats to least used account',
+                'settings.cacheAwareRouting': 'Intelligent Routing',
+                'settings.cacheAwareRoutingDesc': 'Prioritize accounts nearing quota reset, preserve warm prompt cache, and balance load when scores are close',
                 'accModal.export': 'Export JSON',
                 'accModal.exportSuccess': 'Account exported successfully',
                 'settings.enableAll': 'Enable All',
@@ -1461,8 +1467,8 @@
                 'settings.optimizeSortDesc': '按各 provider 剩余配额排序卡片',
                 'settings.autoRestart': '自动重启（守护）',
                 'settings.autoRestartDesc': '服务崩溃后自动重启',
-                'settings.cacheAwareRouting': '缓存感知路由',
-                'settings.cacheAwareRoutingDesc': '同一对话保持使用同一账号以最大化 Prompt 缓存命中；新对话分配至用量最少的账号',
+                'settings.cacheAwareRouting': '智能路由（缓存与重置时间感知）',
+                'settings.cacheAwareRoutingDesc': '优先消耗即将重置的配额，保持活跃对话的 Prompt 缓存命中，并在分值接近时自动均衡负载',
                 'accModal.export': '导出 JSON',
                 'accModal.exportSuccess': '账号已成功导出',
                 'settings.enableAll': '全部启用',
@@ -1660,8 +1666,8 @@
                 'settings.optimizeSortDesc': 'Ordina le schede per quota residua all\'interno di ciascun provider',
                 'settings.autoRestart': 'Riavvio Automatico (Watchdog)',
                 'settings.autoRestartDesc': 'Riavvia automaticamente il server dopo un crash',
-                'settings.cacheAwareRouting': 'Routing Cache-Aware',
-                'settings.cacheAwareRoutingDesc': 'Mantiene la stessa sessione di chat sullo stesso account per massimizzare la cache prompt; distribuisce nuove chat all\'account meno usato',
+                'settings.cacheAwareRouting': 'Routing Intelligente',
+                'settings.cacheAwareRoutingDesc': 'Dà priorità agli account vicini al reset della quota, mantiene la cache prompt attiva e bilancia il carico quando i punteggi sono vicini',
                 'accModal.export': 'Esporta JSON',
                 'accModal.exportSuccess': 'Account esportato con successo',
                 'settings.enableAll': 'Abilita Tutti',
@@ -2777,7 +2783,8 @@
             // 卡片效果
             document.querySelectorAll('.card-3d').forEach(card => {
                 const inner = card.querySelector('.card-inner');
-                if (!card.dataset.tiltBound) {
+                const canHover = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+                if (canHover && !card.dataset.tiltBound) {
                     card.dataset.tiltBound = 'true';
                     card.addEventListener('mousemove', (e) => {
                         const rect = card.getBoundingClientRect();
@@ -3271,7 +3278,7 @@
                                 <div class="progress-bar h-full rounded-full transition-all ${barClass}"
                                      style="width: ${percentage}%;"></div>
                             </div>
-                            <div class="text-[10px] text-gray-500">${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</div>
+                            <div class="flex items-center justify-between text-[10px] text-gray-500"><span>${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</span>${typeof bar.estimatedValueUsd === 'number' && bar.estimatedValueUsd > 0 && provider !== 'zed' ? `<span class="font-mono text-gray-400" title="Estimated remaining quota value (~$${Number(bar.valuePerPercentUsd || 0).toFixed(2)} per 1%)">~$${Number(bar.estimatedValueUsd).toFixed(2)}</span>` : ''}</div>
                         </div>
                     `;
                 }).join('');
@@ -3403,7 +3410,7 @@
                         </div>
                     `;
                 } else {
-                    grid.innerHTML = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    grid.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                         ${accounts.map(renderAccountCard).join('')}
                     </div>`;
                 }
@@ -3938,7 +3945,7 @@
 
         // Initial load
         refreshAll(false);
-        init3DEffect();
+        // init3DEffect() is already called inside refreshAll()
         initSettings();
         fetchIdeStatus();
         resumeCodexSession();
@@ -4063,11 +4070,11 @@
                 const outputDisplay = outputK >= 1000 ? outputM + 'M' : outputK + 'K';
                 const color = getModelColor(m.model);
                 return `
-                    <div class="py-1.5 border-b border-gray-800/30 last:border-0 flex items-center" style="gap: 10px;">
+                    <div class="py-2 border-b border-gray-800/30 last:border-0 flex flex-wrap items-center gap-x-2.5 gap-y-1">
                         <span class="w-3.5 h-3.5 rounded-sm flex-shrink-0" style="background: ${color}"></span>
                         <span class="text-sm font-semibold text-gray-200">${m.model}</span>
                         <span class="text-gray-600">›</span>
-                        <span style="font-size: 12px;" class="text-gray-400">${t('usage.in')}: ${inputDisplay}</span>
+                        <span style="font-size: 12px;" class="text-gray-400">${t('usage.in')}: ${inputDisplay}${(m.cachedInput || 0) > 0 ? ` <span class="text-emerald-400/80 text-[11px]" title="Prompt cache read (0.1x cost)">(⚡${formatTokenCount(m.cachedInput)})</span>` : ''}</span>
                         <span style="font-size: 12px;" class="text-cyan-400 font-medium">$${m.inputCost.toFixed(2)}</span>
                         <span style="font-size: 12px;" class="text-gray-400 ml-2">${t('usage.out')}: ${outputDisplay}</span>
                         <span style="font-size: 12px;" class="text-cyan-400 font-medium">$${m.outputCost.toFixed(2)}</span>

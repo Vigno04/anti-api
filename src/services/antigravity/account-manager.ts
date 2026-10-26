@@ -16,6 +16,12 @@ import { getDataDir } from "~/lib/data-dir"
 import { tightenPrivateFile, writePrivateFile } from "~/lib/private-file"
 import { safeErrorMessage } from "~/lib/redaction"
 import { isCacheAwareRoutingEnabled } from "~/services/settings"
+import { computeEffectiveTokenLoad } from "~/services/usage-tracker"
+import {
+    rankAccountCandidates,
+    recordIntelligentDispatch,
+    recordIntelligentTokenUsage,
+} from "~/services/routing/intelligent-scorer"
 
 type RateLimitReason =
     | "quota_exhausted"
@@ -469,12 +475,38 @@ class AccountManager {
     }
 
     /**
-     * 记录账号的 Token 消耗估算（用于负载均衡与 Cache-Aware 路由）
+     * 记录账号的 Token 消耗估算（用于负载均衡与 Intelligent/Cache-Aware 路由）
      */
-    recordAccountUsage(accountId: string, tokens: number): void {
-        if (!accountId || !tokens || tokens <= 0) return
+    recordAccountUsage(
+        accountId: string,
+        uncachedInputOrTotalTokens: number,
+        outputTokens?: number,
+        cacheReadTokens: number = 0,
+        modelName?: string
+    ): void {
+        if (!accountId) return
+        if (typeof outputTokens === "number") {
+            const effective = computeEffectiveTokenLoad(
+                uncachedInputOrTotalTokens,
+                outputTokens,
+                cacheReadTokens,
+                modelName
+            )
+            if (effective <= 0) return
+            const current = this.accountEstimatedTokens.get(accountId) || 0
+            this.accountEstimatedTokens.set(accountId, current + Math.round(effective))
+            recordIntelligentTokenUsage("antigravity", accountId, {
+                uncachedInputTokens: uncachedInputOrTotalTokens,
+                outputTokens,
+                cacheReadTokens,
+                model: modelName,
+            })
+            return
+        }
+        if (!uncachedInputOrTotalTokens || uncachedInputOrTotalTokens <= 0) return
         const current = this.accountEstimatedTokens.get(accountId) || 0
-        this.accountEstimatedTokens.set(accountId, current + tokens)
+        this.accountEstimatedTokens.set(accountId, current + uncachedInputOrTotalTokens)
+        recordIntelligentTokenUsage("antigravity", accountId, uncachedInputOrTotalTokens)
     }
 
     /**
@@ -633,7 +665,7 @@ class AccountManager {
 
     private async prepareAccountCredentials(
         account: Account,
-        options: { failOnRefreshError?: boolean; sessionKey?: string } = {}
+        options: { failOnRefreshError?: boolean; sessionKey?: string; modelName?: string; recordIntelligent?: boolean } = {}
     ): Promise<ActiveAccountCredentials | null> {
         const now = Date.now()
         if (account.expiresAt > 0 && now > account.expiresAt - 5 * 60 * 1000) {
@@ -659,6 +691,9 @@ class AccountManager {
         if (options.sessionKey) {
             this.sessionAccountMap.set(options.sessionKey, { accountId: account.id, lastSeen: now })
         }
+        if (options.recordIntelligent) {
+            recordIntelligentDispatch("antigravity", account.id, options.sessionKey, options.modelName, now)
+        }
 
         return {
             accessToken: account.accessToken,
@@ -672,12 +707,15 @@ class AccountManager {
     /**
      * 获取下一个可用账号
      * 🆕 粘性策略：使用队列顺序，队首优先
-     * 🆕 Cache-Aware 路由：如果开启且提供 sessionKey，同一对话优先使用原账号，新对话负载均衡
+     * 🆕 Intelligent (Cache + Quota + Reset-Time Aware) 路由：
+     *    结合剩余配额、重置倒计时紧迫度（指数+线性混合公式）、Prompt 缓存亲和性与实时负载均衡选择最优账号
      */
     async getNextAvailableAccount(
         forceRotate: boolean = false,
         sessionKey?: string,
-        isAccountEligible?: (accountId: string) => boolean
+        isAccountEligible?: (accountId: string) => boolean,
+        modelName?: string,
+        messages?: unknown
     ): Promise<ActiveAccountCredentials | null> {
         this.ensureLoaded()
         if (this.accounts.size === 0) {
@@ -692,7 +730,7 @@ class AccountManager {
 
         const isEligible = (id: string) => !isAccountEligible || isAccountEligible(id)
 
-        // 🆕 Cache-Aware 逻辑处理
+        // 🆕 Intelligent (Cache & Reset-Time Aware) 路由逻辑
         if (isCacheAwareRoutingEnabled()) {
             for (const [key, sess] of this.sessionAccountMap.entries()) {
                 if (now - sess.lastSeen > 2 * 3600 * 1000) {
@@ -700,15 +738,40 @@ class AccountManager {
                 }
             }
 
-            if (sessionKey && !forceRotate && this.sessionAccountMap.has(sessionKey)) {
-                const sessionEntry = this.sessionAccountMap.get(sessionKey)!
-                const mappedAccount = this.accounts.get(sessionEntry.accountId)
-                if (
-                    mappedAccount &&
-                    isEligible(mappedAccount.id) &&
-                    (!mappedAccount.rateLimitedUntil || mappedAccount.rateLimitedUntil <= now)
-                ) {
-                    return this.prepareAccountCredentials(mappedAccount, { sessionKey })
+            const availableCandidates = this.accountQueue
+                .filter((id) => {
+                    if (!isEligible(id)) return false
+                    const account = this.accounts.get(id)
+                    if (!account) return false
+                    if (account.rateLimitedUntil && account.rateLimitedUntil > now) return false
+                    return true
+                })
+                .map((accountId) => ({ provider: "antigravity" as const, accountId }))
+
+            if (availableCandidates.length > 0) {
+                const ranked = rankAccountCandidates(availableCandidates, {
+                    model: modelName,
+                    sessionKey,
+                    forceRotate,
+                    isInFlight: (id) => this.inFlightAccounts.has(id),
+                    getConsecutiveFailures: (id) => this.accounts.get(id)?.consecutiveFailures || 0,
+                    getTotalTokens: (id) => this.getAccountUsage(id),
+                    messages,
+                    now,
+                })
+
+                for (const item of ranked) {
+                    const account = this.accounts.get(item.entry.accountId)
+                    if (!account) continue
+                    const prepared = await this.prepareAccountCredentials(account, {
+                        failOnRefreshError: true,
+                        sessionKey,
+                        modelName,
+                        recordIntelligent: true,
+                    })
+                    if (prepared) {
+                        return prepared
+                    }
                 }
             }
         }
