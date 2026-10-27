@@ -41,6 +41,7 @@ export interface QuotaBarSnapshot {
     resetTime?: string
     disabled?: boolean
     estimatedValueUsd?: number
+    estimatedTotalValueUsd?: number
     valuePerPercentUsd?: number
 }
 
@@ -255,9 +256,14 @@ interface PoolValueCalibrationState {
     lastSyncedResetTime?: string
     costUsdSinceSync: number
     effectiveTokensSinceSync: number
-    valuePerPercentUsd: number
-    effectiveTokensPerPercent: number
+    /** Undefined / null when insufficient local data exists. */
+    valuePerPercentUsd?: number
+    effectiveTokensPerPercent?: number
     calibrationSamples: number
+    /** History of recent valid observed samples (USD per 1% drop) for median filter & fallback. */
+    recentEstimates: number[]
+    /** History of recent observed tokens per 1% drop. */
+    recentTokenEstimates?: number[]
 }
 
 const poolCalibrations = new Map<string, PoolValueCalibrationState>()
@@ -280,8 +286,11 @@ function makePoolCalibrationKey(provider: string, accountId: string, poolBarKey:
     return `${makeAccountKey(provider, accountId)}:${poolBarKey}`
 }
 
-function getDefaultValuePerPercentUsd(poolBarKey: string): number {
-    return DEFAULT_VALUE_PER_PERCENT_USD[poolBarKey] ?? DEFAULT_VALUE_PER_PERCENT_USD.default
+function computeMedian(values: number[]): number | undefined {
+    if (!values || values.length === 0) return undefined
+    const sorted = [...values].sort((a, b) => a - b)
+    const mid = Math.floor(sorted.length / 2)
+    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
 function loadDiskCalibrationsIfNeeded(): void {
@@ -293,20 +302,28 @@ function loadDiskCalibrationsIfNeeded(): void {
         const raw = JSON.parse(readFileSync(file, "utf-8")) as Record<string, PoolValueCalibrationState>
         if (!raw || typeof raw !== "object") return
         for (const [calKey, entry] of Object.entries(raw)) {
-            if (!entry || typeof entry.valuePerPercentUsd !== "number") continue
+            if (!entry) continue
             if (!poolCalibrations.has(calKey)) {
+                const recentEstimates = Array.isArray(entry.recentEstimates)
+                    ? entry.recentEstimates.filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n > 0).slice(-7)
+                    : (typeof entry.valuePerPercentUsd === "number" ? [entry.valuePerPercentUsd] : [])
+                const recentTokenEstimates = Array.isArray(entry.recentTokenEstimates)
+                    ? entry.recentTokenEstimates.filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n > 0).slice(-7)
+                    : (typeof entry.effectiveTokensPerPercent === "number" ? [entry.effectiveTokensPerPercent] : [])
+                const medianValue = computeMedian(recentEstimates)
+                const medianTokens = computeMedian(recentTokenEstimates)
+
                 poolCalibrations.set(calKey, {
                     poolBarKey: entry.poolBarKey || "default",
                     lastSyncedPercentage: typeof entry.lastSyncedPercentage === "number" ? entry.lastSyncedPercentage : 100,
                     lastSyncedResetTime: entry.lastSyncedResetTime,
                     costUsdSinceSync: typeof entry.costUsdSinceSync === "number" ? entry.costUsdSinceSync : 0,
                     effectiveTokensSinceSync: typeof entry.effectiveTokensSinceSync === "number" ? entry.effectiveTokensSinceSync : 0,
-                    valuePerPercentUsd: Math.max(0.05, Math.min(5.0, entry.valuePerPercentUsd)),
-                    effectiveTokensPerPercent:
-                        typeof entry.effectiveTokensPerPercent === "number"
-                            ? Math.max(5_000, Math.min(1_500_000, entry.effectiveTokensPerPercent))
-                            : DEFAULT_EFFECTIVE_TOKENS_PER_PERCENT,
-                    calibrationSamples: typeof entry.calibrationSamples === "number" ? entry.calibrationSamples : 0,
+                    valuePerPercentUsd: medianValue,
+                    effectiveTokensPerPercent: medianTokens,
+                    calibrationSamples: typeof entry.calibrationSamples === "number" ? entry.calibrationSamples : recentEstimates.length,
+                    recentEstimates,
+                    recentTokenEstimates,
                 })
             }
         }
@@ -350,9 +367,11 @@ function getOrCreatePoolCalibration(
             lastSyncedResetTime: resetTime,
             costUsdSinceSync: 0,
             effectiveTokensSinceSync: 0,
-            valuePerPercentUsd: getDefaultValuePerPercentUsd(poolBarKey),
-            effectiveTokensPerPercent: DEFAULT_EFFECTIVE_TOKENS_PER_PERCENT,
+            valuePerPercentUsd: undefined,
+            effectiveTokensPerPercent: undefined,
             calibrationSamples: 0,
+            recentEstimates: [],
+            recentTokenEstimates: [],
         }
         poolCalibrations.set(calKey, state)
     }
@@ -415,13 +434,23 @@ export function enrichBarsWithValueEstimates(
     return bars.map(bar => {
         if (!bar || typeof bar.percentage !== "number") return bar
         const cal = getOrCreatePoolCalibration(provider, accountId, bar.key, bar.percentage, bar.resetTime)
+        if (typeof cal.valuePerPercentUsd !== "number" || cal.valuePerPercentUsd <= 0) {
+            return {
+                ...bar,
+                estimatedValueUsd: undefined,
+                estimatedTotalValueUsd: undefined,
+                valuePerPercentUsd: undefined,
+            }
+        }
         const valueDepletionPct = (cal.costUsdSinceSync / Math.max(0.05, cal.valuePerPercentUsd))
         const effectivePct = Math.max(0, Math.min(100, bar.percentage - valueDepletionPct))
         const estimatedValueUsd = Math.round(effectivePct * cal.valuePerPercentUsd * 100) / 100
+        const estimatedTotalValueUsd = Math.round(100 * cal.valuePerPercentUsd * 100) / 100
         const valuePerPercentUsd = Math.round(cal.valuePerPercentUsd * 100) / 100
         return {
             ...bar,
             estimatedValueUsd,
+            estimatedTotalValueUsd,
             valuePerPercentUsd,
         }
     })
@@ -461,22 +490,19 @@ export function syncIntelligentQuotaCache(
 
         if (newPct < prevPct && !resetChanged) {
             const deltaPct = prevPct - newPct
-            if (deltaPct >= 0.5 && existingCal.costUsdSinceSync > 0) {
-                const observedUsdPerPct = Math.max(
-                    0.05,
-                    Math.min(5.0, existingCal.costUsdSinceSync / deltaPct)
-                )
-                const observedTokensPerPct = Math.max(
-                    5_000,
-                    Math.min(1_500_000, existingCal.effectiveTokensSinceSync / deltaPct)
-                )
-                const alpha = existingCal.calibrationSamples === 0 ? 0.5 : CALIBRATION_EWMA_ALPHA
-                existingCal.valuePerPercentUsd =
-                    (1 - alpha) * existingCal.valuePerPercentUsd + alpha * observedUsdPerPct
-                existingCal.effectiveTokensPerPercent =
-                    (1 - alpha) * existingCal.effectiveTokensPerPercent + alpha * observedTokensPerPct
-                existingCal.calibrationSamples += 1
-                calibrationUpdated = true
+            // Require at least a 2.0% drop AND a noticeable local cost to avoid noise and outside usage skew
+            if (deltaPct >= 2.0 && existingCal.costUsdSinceSync > 0.05) {
+                const observedUsdPerPct = existingCal.costUsdSinceSync / deltaPct
+                const observedTokensPerPct = existingCal.effectiveTokensSinceSync / deltaPct
+
+                if (Number.isFinite(observedUsdPerPct) && observedUsdPerPct > 0) {
+                    existingCal.recentEstimates = [...(existingCal.recentEstimates || []), observedUsdPerPct].slice(-5)
+                    existingCal.recentTokenEstimates = [...(existingCal.recentTokenEstimates || []), observedTokensPerPct].slice(-5)
+                    existingCal.valuePerPercentUsd = computeMedian(existingCal.recentEstimates)
+                    existingCal.effectiveTokensPerPercent = computeMedian(existingCal.recentTokenEstimates)
+                    existingCal.calibrationSamples = existingCal.recentEstimates.length
+                    calibrationUpdated = true
+                }
             }
             existingCal.costUsdSinceSync = 0
             existingCal.effectiveTokensSinceSync = 0
@@ -489,16 +515,13 @@ export function syncIntelligentQuotaCache(
             existingCal.lastSyncedPercentage = newPct
             existingCal.lastSyncedResetTime = bar.resetTime
         } else {
-            // Percentage unchanged on this sync (e.g., < 1% consumed so far).
-            // Keep accumulating until the integer percentage ticks down, capped at 1.5% worth of value.
-            existingCal.costUsdSinceSync = Math.min(
-                existingCal.costUsdSinceSync,
-                existingCal.valuePerPercentUsd * 1.5
-            )
-            existingCal.effectiveTokensSinceSync = Math.min(
-                existingCal.effectiveTokensSinceSync,
-                existingCal.effectiveTokensPerPercent * 1.5
-            )
+            // Percentage unchanged on this sync (e.g., < 2% consumed so far).
+            // Keep accumulating our own usage until the percentage ticks down.
+            const cap = typeof existingCal.valuePerPercentUsd === "number" ? existingCal.valuePerPercentUsd * 4.0 : 10.0
+            existingCal.costUsdSinceSync = Math.min(existingCal.costUsdSinceSync, cap)
+            if (typeof existingCal.effectiveTokensPerPercent === "number") {
+                existingCal.effectiveTokensSinceSync = Math.min(existingCal.effectiveTokensSinceSync, existingCal.effectiveTokensPerPercent * 4.0)
+            }
             existingCal.lastSyncedResetTime = bar.resetTime ?? existingCal.lastSyncedResetTime
         }
     }
@@ -678,9 +701,11 @@ export function recordIntelligentTokenUsage(
     cal.effectiveTokensSinceSync += effectiveTokens
 
     // If live estimated quota depletion since last sync crosses threshold, trigger proactive refresh
-    const estimatedDepletion = cal.costUsdSinceSync / (100 * Math.max(0.05, cal.valuePerPercentUsd))
-    if (estimatedDepletion >= PROACTIVE_REFRESH_DEPLETION_THRESHOLD) {
-        maybeTriggerProactiveQuotaRefresh(provider, accountId, "high_live_depletion", eventNow)
+    if (typeof cal.valuePerPercentUsd === "number" && cal.valuePerPercentUsd > 0) {
+        const estimatedDepletion = cal.costUsdSinceSync / (100 * cal.valuePerPercentUsd)
+        if (estimatedDepletion >= PROACTIVE_REFRESH_DEPLETION_THRESHOLD) {
+            maybeTriggerProactiveQuotaRefresh(provider, accountId, "high_live_depletion", eventNow)
+        }
     }
 }
 
@@ -908,10 +933,10 @@ export function getAccountQuotaValueEstimate(
         accountId,
         poolKey,
         effectiveQuotaPercentage: Math.round(score.effectiveQuotaFraction * 1000) / 10,
-        valuePerPercentUsd: Math.round(cal.valuePerPercentUsd * 1000) / 1000,
-        estimatedRemainingValueUsd: Math.round(score.estimatedRemainingValueUsd * 100) / 100,
-        effectiveTokensPerPercent: Math.round(cal.effectiveTokensPerPercent),
-        estimatedRemainingEffectiveTokens: Math.round(score.estimatedRemainingEffectiveTokens),
+        valuePerPercentUsd: typeof cal.valuePerPercentUsd === "number" ? Math.round(cal.valuePerPercentUsd * 1000) / 1000 : 0,
+        estimatedRemainingValueUsd: typeof score.estimatedRemainingValueUsd === "number" ? Math.round(score.estimatedRemainingValueUsd * 100) / 100 : 0,
+        effectiveTokensPerPercent: typeof cal.effectiveTokensPerPercent === "number" ? Math.round(cal.effectiveTokensPerPercent) : 0,
+        estimatedRemainingEffectiveTokens: typeof score.estimatedRemainingEffectiveTokens === "number" ? Math.round(score.estimatedRemainingEffectiveTokens) : 0,
         costUsdSinceSync: Math.round(cal.costUsdSinceSync * 10000) / 10000,
         calibrationSamples: cal.calibrationSamples,
     }
@@ -952,7 +977,8 @@ export function scoreAccountCandidate(params: ScoreCandidateParams): Intelligent
 
     // Cache-aware live quota depletion estimate since the last upstream quota sync:
     // Uses calibrated valuePerPercentUsd when token/cost usage was recorded, plus a small per-dispatch baseline.
-    const valueDepletion = cal.costUsdSinceSync / (100 * Math.max(0.05, cal.valuePerPercentUsd))
+    const unitValue = typeof cal.valuePerPercentUsd === "number" && cal.valuePerPercentUsd > 0 ? cal.valuePerPercentUsd : 0.50
+    const valueDepletion = cal.costUsdSinceSync / (100 * unitValue)
     const dispatchDepletion = load.dispatchesSinceQuotaSync * LIVE_QUOTA_DEPLETION_PER_DISPATCH
     const liveDepletion = Math.min(MAX_LIVE_QUOTA_DEPLETION, valueDepletion + dispatchDepletion)
 
@@ -1062,8 +1088,8 @@ export function scoreAccountCandidate(params: ScoreCandidateParams): Intelligent
 
     // Estimate remaining dollar value and effective token capacity from calibrated Percentage-to-Value
     const effectiveQuotaPercent = exhausted ? 0 : rawQuotaFraction * 100
-    const estimatedRemainingValueUsd = effectiveQuotaPercent * cal.valuePerPercentUsd
-    const estimatedRemainingEffectiveTokens = effectiveQuotaPercent * cal.effectiveTokensPerPercent
+    const estimatedRemainingValueUsd = typeof cal.valuePerPercentUsd === "number" ? effectiveQuotaPercent * cal.valuePerPercentUsd : 0
+    const estimatedRemainingEffectiveTokens = typeof cal.effectiveTokensPerPercent === "number" ? effectiveQuotaPercent * cal.effectiveTokensPerPercent : 0
 
     // Estimate how much value the incoming request will consume on THIS candidate account
     // (accounting for whether the prompt cache is warm on this account: 85% cached @ 0.1x vs 100% uncached @ 1.0x)
@@ -1097,18 +1123,20 @@ export function scoreAccountCandidate(params: ScoreCandidateParams): Intelligent
     let lowQuotaReservePenalty = 0
     let insufficientQuotaForRequest = false
     if (!exhausted && !unknownQuota && rawQuotaFraction <= NEAR_EXHAUSTION_QUOTA_FRACTION) {
-        const requiredValueUsd = Math.max(0.06, estimatedRequestCostUsd * REQUEST_FIT_SAFETY_MARGIN)
-        if (estimatedRemainingValueUsd < requiredValueUsd) {
-            insufficientQuotaForRequest = true
-            const deficitRatio = Math.max(0, Math.min(1, 1 - estimatedRemainingValueUsd / requiredValueUsd))
-            lowQuotaReservePenalty = INSUFFICIENT_QUOTA_FOR_REQUEST_PENALTY + 250.0 * deficitRatio
-        } else if (tau < 0.25) {
-            // The incoming request fits in the remaining value and the reset is approaching:
-            // ensure capacityScore doesn't collapse just because percentage is 1-5%, so we finish the quota!
-            const finishableCapacityFloor = 0.30 * (1 - tau / 0.25)
-            if (rawQuotaFraction < finishableCapacityFloor) {
-                const boostedCapacity = 100 * Math.pow(finishableCapacityFloor, QUOTA_EXPONENT_ALPHA) * urgencyMultiplier
-                capacityScore = Math.max(capacityScore, boostedCapacity)
+        if (typeof cal.valuePerPercentUsd === "number" && cal.valuePerPercentUsd > 0) {
+            const requiredValueUsd = Math.max(0.06, estimatedRequestCostUsd * REQUEST_FIT_SAFETY_MARGIN)
+            if (estimatedRemainingValueUsd < requiredValueUsd) {
+                insufficientQuotaForRequest = true
+                const deficitRatio = Math.max(0, Math.min(1, 1 - estimatedRemainingValueUsd / requiredValueUsd))
+                lowQuotaReservePenalty = INSUFFICIENT_QUOTA_FOR_REQUEST_PENALTY + 250.0 * deficitRatio
+            } else if (tau < 0.25) {
+                // The incoming request fits in the remaining value and the reset is approaching:
+                // ensure capacityScore doesn't collapse just because percentage is 1-5%, so we finish the quota!
+                const finishableCapacityFloor = 0.30 * (1 - tau / 0.25)
+                if (rawQuotaFraction < finishableCapacityFloor) {
+                    const boostedCapacity = 100 * Math.pow(finishableCapacityFloor, QUOTA_EXPONENT_ALPHA) * urgencyMultiplier
+                    capacityScore = Math.max(capacityScore, boostedCapacity)
+                }
             }
         }
     }
@@ -1151,7 +1179,7 @@ export function scoreAccountCandidate(params: ScoreCandidateParams): Intelligent
         liveLoadPenalty,
         concurrencyPenalty,
         failurePenalty,
-        valuePerPercentUsd: cal.valuePerPercentUsd,
+        valuePerPercentUsd: cal.valuePerPercentUsd ?? 0,
         estimatedRemainingValueUsd,
         estimatedRemainingEffectiveTokens,
         estimatedRequestCostUsd,

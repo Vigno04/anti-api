@@ -379,31 +379,40 @@ describe("Intelligent Routing Scorer", () => {
 
         const estimate = getAccountQuotaValueEstimate("antigravity", "acc-cal", "claude-opus-5-5", baseNow + 3000)
         expect(estimate.calibrationSamples).toBe(1)
-        // Prior was $0.50/%, observed was $1.00/%, 50/50 first-sample EWMA -> $0.75/%
-        expect(estimate.valuePerPercentUsd).toBeCloseTo(0.75, 2)
-        // 78% remaining * $0.75/% = $58.50 estimated remaining value!
-        expect(estimate.estimatedRemainingValueUsd).toBeCloseTo(58.5, 1)
+        // With hardcoded priors removed, first sample directly observed is $1.00/%
+        expect(estimate.valuePerPercentUsd).toBeCloseTo(1.00, 2)
+        // 78% remaining * $1.00/% = $78.00 estimated remaining value!
+        expect(estimate.estimatedRemainingValueUsd).toBeCloseTo(78.0, 1)
     })
 
     test("evaluates whether a nearly-finished account can or cannot fit the incoming request using Percentage-to-Value", () => {
-        // Account A: 1% left (~$0.50 remaining value at default $0.50/%), resetting in 2 hours (very urgent!)
+        // First, calibrate acc-nearly-empty-1pct and acc-plenty-80pct with observed usage ($0.50/%)
         syncIntelligentQuotaCache("antigravity", "acc-nearly-empty-1pct", [
-            {
-                key: "claude_gpt_week",
-                label: "weekly claude gpt",
-                percentage: 1,
-                resetTime: new Date(baseNow + 2 * HOUR_MS).toISOString(),
-            },
+            { key: "claude_gpt_week", label: "weekly claude gpt", percentage: 10, resetTime: new Date(baseNow + 2 * HOUR_MS).toISOString() },
+        ])
+        recordIntelligentTokenUsage("antigravity", "acc-nearly-empty-1pct", {
+            uncachedInputTokens: 0,
+            outputTokens: 180_000, // $4.50
+            cacheReadTokens: 0,
+            model: "claude-opus-5-5",
+            now: baseNow,
+        })
+        syncIntelligentQuotaCache("antigravity", "acc-nearly-empty-1pct", [
+            { key: "claude_gpt_week", label: "weekly claude gpt", percentage: 1, resetTime: new Date(baseNow + 2 * HOUR_MS).toISOString() }, // 9% drop for $4.50 -> $0.50/%
         ])
 
-        // Account B: 80% left (~$40.00 remaining value), resetting in 120 hours
         syncIntelligentQuotaCache("antigravity", "acc-plenty-80pct", [
-            {
-                key: "claude_gpt_week",
-                label: "weekly claude gpt",
-                percentage: 80,
-                resetTime: new Date(baseNow + 120 * HOUR_MS).toISOString(),
-            },
+            { key: "claude_gpt_week", label: "weekly claude gpt", percentage: 85, resetTime: new Date(baseNow + 120 * HOUR_MS).toISOString() },
+        ])
+        recordIntelligentTokenUsage("antigravity", "acc-plenty-80pct", {
+            uncachedInputTokens: 0,
+            outputTokens: 100_000, // $2.50
+            cacheReadTokens: 0,
+            model: "claude-opus-5-5",
+            now: baseNow,
+        })
+        syncIntelligentQuotaCache("antigravity", "acc-plenty-80pct", [
+            { key: "claude_gpt_week", label: "weekly claude gpt", percentage: 80, resetTime: new Date(baseNow + 120 * HOUR_MS).toISOString() }, // 5% drop for $2.50 -> $0.50/%
         ])
 
         const candidates = [
@@ -417,7 +426,7 @@ describe("Intelligent Routing Scorer", () => {
             model: "claude-opus-5-5",
             estimatedPromptTokens: 2_000,
             expectedOutputTokens: 1_000,
-            now: baseNow,
+            now: baseNow + 11 * 60 * 1000, // advance beyond decayed load window
         })
         expect(smallRanked[0].entry.accountId).toBe("acc-nearly-empty-1pct")
         expect(smallRanked[0].score.insufficientQuotaForRequest).toBe(false)
@@ -474,15 +483,22 @@ describe("Intelligent Routing Scorer", () => {
         expect(triggered.some(t => t.accountId === "acc-expired-timer" && t.reason === "reset_passed")).toBe(true)
 
         // 2. High live depletion (>= 8%) -> should trigger "high_live_depletion"
+        // Calibrate with an initial drop so valuePerPercentUsd is established ($0.50/%)
         syncIntelligentQuotaCache("antigravity", "acc-heavy-use", [
-            {
-                key: "claude_gpt_week",
-                label: "weekly claude gpt",
-                percentage: 60,
-                resetTime: new Date(baseNow + 48 * HOUR_MS).toISOString(),
-            },
+            { key: "claude_gpt_week", label: "weekly claude gpt", percentage: 70, resetTime: new Date(baseNow + 48 * HOUR_MS).toISOString() },
         ])
-        // Consume $5.00 (~10% of default $50 weekly pool)
+        recordIntelligentTokenUsage("antigravity", "acc-heavy-use", {
+            uncachedInputTokens: 0,
+            outputTokens: 200_000, // $5.00
+            cacheReadTokens: 0,
+            model: "claude-opus-5-5",
+            now: baseNow,
+        })
+        syncIntelligentQuotaCache("antigravity", "acc-heavy-use", [
+            { key: "claude_gpt_week", label: "weekly claude gpt", percentage: 60, resetTime: new Date(baseNow + 48 * HOUR_MS).toISOString() }, // 10% drop for $5.00 -> $0.50/%
+        ])
+
+        // Now consume $5.00 in the new sync interval (10% depletion >= 8% threshold)
         recordIntelligentTokenUsage("antigravity", "acc-heavy-use", {
             uncachedInputTokens: 0,
             outputTokens: 200_000,

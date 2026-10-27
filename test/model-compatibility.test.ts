@@ -1,24 +1,7 @@
-import { expect, test } from "bun:test"
-import { AVAILABLE_MODELS } from "~/lib/config"
+import { afterAll, expect, test } from "bun:test"
 import { buildCatalog } from "~/lib/model-catalog"
 import { getModelEnumValue, MODEL_ENUM } from "~/proto/encoder"
-import { getProviderModels } from "~/services/routing/models"
-
-const GEMINI_31_MODELS = [
-    "gemini-3.1-pro-high",
-    "gemini-3.1-pro-low",
-    "gemini-3.1-flash-lite",
-] as const
-
-test("Gemini 3.1 models stay configured and routable as legacy Antigravity models", () => {
-    const configuredIds = new Set(AVAILABLE_MODELS.map(model => model.id))
-    const providerIds = new Set(getProviderModels("antigravity", { includeAllVariants: true }).map(model => model.id))
-
-    for (const model of GEMINI_31_MODELS) {
-        expect(configuredIds.has(model)).toBe(true)
-        expect(providerIds.has(model)).toBe(true)
-    }
-})
+import { clearAllDynamicAntigravityModelsByAccount, clearDynamicAntigravityModels, getProviderModels, setDynamicAntigravityModels } from "~/services/routing/models"
 
 test("catalog resolves family aliases to the highest version", () => {
     const catalog = buildCatalog([
@@ -62,6 +45,11 @@ test("Gemini 3.1 models map to the corresponding Antigravity proto enums", () =>
 })
 
 test("getProviderModels antigravity respects includeAllVariants flag", () => {
+    clearAllDynamicAntigravityModelsByAccount()
+    setDynamicAntigravityModels(
+        ["claude-opus-5-5-high", "claude-opus-5-5-thinking", "claude-sonnet-5-5-medium", "gemini-4-argon-high", "gemini-3.8-flash-medium", "gpt-oss-120b-medium"]
+            .map(id => ({ id, label: id }))
+    )
     const baseModels = getProviderModels("antigravity", { includeAllVariants: false })
     const baseIds = baseModels.map(m => m.id)
 
@@ -90,3 +78,7 @@ test("getProviderModels antigravity respects includeAllVariants flag", () => {
     }
 })
 
+afterAll(() => {
+    clearAllDynamicAntigravityModelsByAccount()
+    clearDynamicAntigravityModels()
+})

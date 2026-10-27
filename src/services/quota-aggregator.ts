@@ -35,6 +35,7 @@ export type AccountBar = {
     resetTime?: string
     disabled?: boolean
     estimatedValueUsd?: number
+    estimatedTotalValueUsd?: number
     valuePerPercentUsd?: number
 }
 

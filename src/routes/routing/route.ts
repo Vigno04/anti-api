@@ -1,11 +1,12 @@
 import { Hono } from "hono"
 import consola from "consola"
 import { authStore } from "~/services/auth/store"
-import { listCopilotModelsForAccount } from "~/services/copilot/chat"
+import { listCopilotModelsForAccount, getCopilotReasoningEfforts, type CopilotModelInfo } from "~/services/copilot/chat"
 import { listCodexModelsForAccount } from "~/services/codex/chat"
 import { fetchAntigravityModels } from "~/services/antigravity/quota-fetch"
 import { listZedModelsForAccount } from "~/services/zed/chat"
 import { listKiroModelsForAccount } from "~/services/kiro/chat"
+import { listGrokModelsForAccount } from "~/services/grok/chat"
 import {
     clearAllDynamicProviderModelsByAccount,
     clearDynamicProviderModels,
@@ -13,6 +14,7 @@ import {
     getProviderModels,
     getProviderModelsForAccount,
     setDynamicProviderModels,
+    setModelSyncHook,
     setDynamicProviderModelsForAccount,
     type ProviderModelOption,
 } from "~/services/routing/models"
@@ -194,6 +196,70 @@ function triggerProviderSync(
     return state.inFlight
 }
 
+/** Copilot models as the account really has them, plus per-effort variants when the model advertises reasoning effort. */
+function copilotModelOptions(remote: CopilotModelInfo[]): ProviderModelOption[] {
+    const options: ProviderModelOption[] = []
+    for (const model of remote) {
+        const name = model.name?.trim() || model.id
+        options.push({ id: model.id, label: `Copilot - ${name}` })
+        for (const effort of getCopilotReasoningEfforts(model).filter(e => e === "low" || e === "medium" || e === "high")) {
+            options.push({ id: `${model.id}-${effort}`, label: `Copilot - ${name} (${effort})` })
+        }
+    }
+    return options
+}
+
+/**
+ * Refreshes the online model list of every provider with accounts (TTL-throttled).
+ * Used by the routing panel and by /v1/models so exposed models match what each account really has.
+ */
+export async function syncProviderModels(now: number = Date.now(), timeoutMs: number = SYNC_TIMEOUT_MS): Promise<void> {
+    accountManager.load()
+    const antigravityAccounts = listAccountsInOrder("antigravity")
+    const codexAccounts = listAccountsInOrder("codex")
+    const copilotAccounts = listAccountsInOrder("copilot")
+    const zedAccounts = listAccountsInOrder("zed")
+    const kiroAccounts = listAccountsInOrder("kiro")
+    const grokAccounts = listAccountsInOrder("grok")
+
+    const activeSyncs = [
+        triggerProviderSync("grok", "Grok", grokAccounts, now, async (account) => {
+            const remote = await listGrokModelsForAccount(account)
+            return normalizeRemoteModels("Grok", remote.map(m => ({ id: m.id, name: (m as { name?: string }).name })))
+        }),
+        triggerProviderSync("copilot", "Copilot", copilotAccounts, now, async (account) => {
+            const remote = await listCopilotModelsForAccount(account)
+            return copilotModelOptions(remote)
+        }),        triggerProviderSync("codex", "Codex", codexAccounts, now, (account) => listCodexModelsForAccount(account)),
+        triggerProviderSync("antigravity", "Antigravity", antigravityAccounts, now, async (account) => {
+            const active = await accountManager.getAccountById(account.id)
+            if (!active) return []
+            const remote = await fetchAntigravityModels(active.accessToken, active.projectId, active.proxy)
+            return Object.keys(remote.models || {}).map((id) => ({
+                id,
+                label: `Antigravity - ${id}`,
+            }))
+        }),
+        triggerProviderSync("zed", "Zed", zedAccounts, now, async (account) => {
+            const remote = await listZedModelsForAccount(account)
+            return normalizeRemoteModels("Zed", remote.map(model => ({
+                id: model.id,
+                name: model.display_name || model.id,
+            })))
+        }),
+        triggerProviderSync("kiro", "Kiro", kiroAccounts, now, async (account) => {
+            const remote = await listKiroModelsForAccount(account)
+            return normalizeRemoteModels("Kiro", remote)
+        }),
+    ].filter((p): p is Promise<void> => p !== null)
+
+    if (activeSyncs.length > 0) {
+        await Promise.all(activeSyncs.map(p => settleWithTimeout(p, timeoutMs)))
+    }
+}
+// Lets the router sync models on demand (e.g. first request right after startup)
+setModelSyncHook(() => syncProviderModels(Date.now(), 4000))
+
 routingRouter.get("/", (c) => {
     try {
         const htmlPath = join(getPublicDir(import.meta.dir, "../../../public"), "routing.html")
@@ -220,39 +286,7 @@ routingRouter.get("/config", async (c) => {
     const kiroAccounts = listAccountsInOrder("kiro")
 
     const now = Date.now()
-
-    const activeSyncs = [
-        triggerProviderSync("copilot", "Copilot", copilotAccounts, now, async (account) => {
-            const remote = await listCopilotModelsForAccount(account)
-            return normalizeRemoteModels("Copilot", remote)
-        }),
-        triggerProviderSync("codex", "Codex", codexAccounts, now, (account) => listCodexModelsForAccount(account)),
-        triggerProviderSync("antigravity", "Antigravity", antigravityAccounts, now, async (account) => {
-            const active = await accountManager.getAccountById(account.id)
-            if (!active) return []
-            const remote = await fetchAntigravityModels(active.accessToken, active.projectId, active.proxy)
-            return Object.keys(remote.models || {}).map((id) => ({
-                id,
-                label: `Antigravity - ${id}`,
-            }))
-        }),
-        triggerProviderSync("zed", "Zed", zedAccounts, now, async (account) => {
-            const remote = await listZedModelsForAccount(account)
-            return normalizeRemoteModels("Zed", remote.map(model => ({
-                id: model.id,
-                name: model.display_name || model.id,
-            })))
-        }),
-        triggerProviderSync("kiro", "Kiro", kiroAccounts, now, async (account) => {
-            const remote = await listKiroModelsForAccount(account)
-            return normalizeRemoteModels("Kiro", remote)
-        }),
-    ].filter((p): p is Promise<void> => p !== null)
-
-    if (activeSyncs.length > 0) {
-        await Promise.all(activeSyncs.map(p => settleWithTimeout(p, SYNC_TIMEOUT_MS)))
-    }
-
+    await syncProviderModels(now)
     const accounts = {
         antigravity: antigravityAccounts.map(toSummary),
         codex: codexAccounts.map(toSummary),

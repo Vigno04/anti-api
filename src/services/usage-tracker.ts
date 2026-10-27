@@ -3,11 +3,12 @@ import { join } from "path"
 import consola from "consola"
 import { getDataDir } from "~/lib/data-dir"
 import { safeErrorMessage } from "~/lib/redaction"
+import { lookupModelPrice } from "~/services/model-pricing"
 
 const USAGE_DIR = getDataDir()
 const USAGE_FILE = join(USAGE_DIR, "usage.json")
 
-// Pricing per million tokens (USD)
+// Coarse per-family fallback (USD per million tokens), used only when the online datasheet has no entry for a model
 export const PRICING = {
     gpt: { input: 1.75, output: 14.0 },
     claude: { input: 5.0, output: 25.0 },
@@ -117,6 +118,23 @@ export function detectPricingFamily(model: string): keyof typeof PRICING {
     return "claude"
 }
 
+export interface EffectivePricing {
+    input: number
+    output: number
+    /** Cache-read price as a fraction of the input price. */
+    cacheMultiplier: number
+}
+
+/** Per-model price from the online datasheet, falling back to the family table. */
+export function getModelPricing(model: string): EffectivePricing {
+    const online = lookupModelPrice(model)
+    if (online) {
+        return { input: online.input, output: online.output, cacheMultiplier: online.cacheRead / online.input }
+    }
+    const family = PRICING[detectPricingFamily(model)]
+    return { input: family.input, output: family.output, cacheMultiplier: CACHE_READ_COST_MULTIPLIER }
+}
+
 /**
  * Estimate the cache-adjusted USD cost of a request.
  * `uncachedInputTokens` are charged at 100% of input rate;
@@ -129,13 +147,12 @@ export function estimateRequestCostUsd(
     outputTokens: number,
     cacheReadTokens: number = 0
 ): number {
-    const family = detectPricingFamily(model)
-    const pricing = PRICING[family]
+    const pricing = getModelPricing(model)
     const safeUncached = Math.max(0, uncachedInputTokens || 0)
     const safeCached = Math.max(0, cacheReadTokens || 0)
     const safeOutput = Math.max(0, outputTokens || 0)
 
-    const effectiveInputTokens = safeUncached + safeCached * CACHE_READ_COST_MULTIPLIER
+    const effectiveInputTokens = safeUncached + safeCached * pricing.cacheMultiplier
     return (effectiveInputTokens / 1_000_000) * pricing.input + (safeOutput / 1_000_000) * pricing.output
 }
 
@@ -151,13 +168,12 @@ export function computeEffectiveTokenLoad(
     cacheReadTokens: number = 0,
     model: string = "claude"
 ): number {
-    const family = detectPricingFamily(model)
-    const pricing = PRICING[family]
+    const pricing = getModelPricing(model)
     const outputWeight = pricing.output / pricing.input
     const safeUncached = Math.max(0, uncachedInputTokens || 0)
     const safeCached = Math.max(0, cacheReadTokens || 0)
     const safeOutput = Math.max(0, outputTokens || 0)
-    return safeUncached + safeCached * CACHE_READ_COST_MULTIPLIER + safeOutput * outputWeight
+    return safeUncached + safeCached * pricing.cacheMultiplier + safeOutput * outputWeight
 }
 
 // Get today's date string (local timezone)
@@ -225,11 +241,10 @@ export function recordUsage(
 
 // Calculate cost for a model (accounting for cached input discount)
 function calculateCost(model: string, usage: ModelUsage): { inputCost: number; outputCost: number; total: number } {
-    const family = detectPricingFamily(model)
-    const pricing = PRICING[family]
+    const pricing = getModelPricing(model)
     const cachedInput = Math.min(usage.input, Math.max(0, usage.cachedInput || 0))
     const uncachedInput = Math.max(0, usage.input - cachedInput)
-    const effectiveInput = uncachedInput + cachedInput * CACHE_READ_COST_MULTIPLIER
+    const effectiveInput = uncachedInput + cachedInput * pricing.cacheMultiplier
 
     const inputCost = (effectiveInput / 1_000_000) * pricing.input
     const outputCost = (usage.output / 1_000_000) * pricing.output

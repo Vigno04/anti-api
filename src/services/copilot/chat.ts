@@ -24,23 +24,45 @@ interface CopilotTokenResponse {
     expires_at?: number
 }
 
+/** Copilot advertises low/medium/high and, per model, none/xhigh/max. */
+export type CopilotReasoningEffort = string
+
 export interface CopilotModelInfo {
     id: string
     name?: string
     model_picker_enabled?: boolean
     vendor?: string
+    policy?: { state?: string }
+    supported_endpoints?: string[]
+    capabilities?: {
+        type?: string
+        supports?: {
+            reasoning_effort?: string[] | boolean
+            tool_calls?: boolean
+            streaming?: boolean
+            vision?: boolean
+        }
+    }
 }
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>()
 const modelsCache = new Map<string, { models: CopilotModelInfo[]; expiresAt: number }>()
 
+/** Models this account can actually use through chat/completions (what the Copilot picker shows). */
 function normalizeCopilotModels(models: CopilotModelInfo[]): CopilotModelInfo[] {
     const deduped = new Map<string, CopilotModelInfo>()
+    const hasPolicy = models.some(m => m?.policy?.state === "enabled")
 
     for (const model of models) {
         const id = model?.id?.trim()
         if (!id) continue
-        if (model.model_picker_enabled === false) continue
+        // model_picker_enabled is unreliable (false for every model on some accounts): policy.state is what gates usage
+        if (model.policy?.state === "disabled") continue
+        if (hasPolicy && model.policy?.state !== "enabled") continue
+        const type = model.capabilities?.type
+        if (type && type !== "chat") continue
+        if (model.supported_endpoints && model.supported_endpoints.length > 0
+            && !model.supported_endpoints.includes("/chat/completions")) continue // /responses-only models are not callable here
         if (deduped.has(id)) continue
 
         deduped.set(id, {
@@ -52,44 +74,51 @@ function normalizeCopilotModels(models: CopilotModelInfo[]): CopilotModelInfo[] 
     return Array.from(deduped.values())
 }
 
-// Map internal model names to Copilot API compatible names
-// Based on GitHub Copilot Pro supported models:
-// Anthropic: claude-haiku-4.5, claude-opus-4.1, claude-opus-4.5, claude-sonnet-4, claude-sonnet-4.5
-// OpenAI: gpt-4.1, gpt-4o, gpt-5, gpt-5-mini, gpt-5.1, gpt-5.1-codex, gpt-5.1-codex-max, gpt-5.2
-// Google: gemini-2.5-pro, gemini-3-flash, gemini-3-pro
-function mapCopilotModelName(model: string): string {
-    const modelMappings: Record<string, string> = {
-        // Claude models - map hyphenated to dotted format
-        "claude-sonnet-4-5": "claude-sonnet-4.5",
-        "claude-sonnet-4-5-thinking": "claude-sonnet-4.5", // No thinking variant in Copilot
-        "claude-opus-4-5": "claude-opus-4.5",
-        "claude-opus-4-5-thinking": "claude-opus-4.5",
-        "claude-opus-4-1": "claude-opus-4.1",
-        "claude-haiku-4-5": "claude-haiku-4.5",
-        "claude-sonnet-4": "claude-sonnet-4",
-        // GPT models
-        "gpt-4.1": "gpt-4.1",
-        "gpt-4.1-mini": "gpt-4.1-mini",
-        "gpt-4o": "gpt-4o",
-        "gpt-4o-mini": "gpt-4o-mini",
-        "gpt-5": "gpt-5",
-        "gpt-5-mini": "gpt-5-mini",
-        "gpt-5.1": "gpt-5.1",
-        "gpt-5.1-codex": "gpt-5.1-codex",
-        "gpt-5.2": "gpt-5.2",
-        // Gemini models
-        "gemini-2.5-pro": "gemini-2.5-pro",
-        "gemini-3-flash": "gemini-3-flash",
-        "gemini-3-pro": "gemini-3-pro",
-    }
-
-    const mapped = modelMappings[model]
-    if (mapped) {
-        return mapped
-    }
-    return model
+/** Reasoning efforts advertised by Copilot for a model (empty when it has no effort control). */
+export function getCopilotReasoningEfforts(model: CopilotModelInfo): CopilotReasoningEffort[] {
+    const raw = model.capabilities?.supports?.reasoning_effort
+    if (!Array.isArray(raw)) return []
+    return raw.filter((e): e is string => typeof e === "string" && e !== "none")
 }
 
+const EFFORT_SUFFIX = /-(low|medium|high)$/
+
+function modelKey(id: string): string {
+    return id.trim().toLowerCase().replace(/[._]/g, "-")
+}
+
+/**
+ * Resolves a requested id (e.g. `claude-sonnet-4-5`, `gpt-5.2-high`) to a model the account really has,
+ * plus the reasoning effort encoded in the id. No hardcoded model table: the live /models list is the source of truth.
+ */
+export function resolveCopilotModel(
+    available: CopilotModelInfo[],
+    requested: string
+): { id: string; effort?: CopilotReasoningEffort } {
+    const lookup = (id: string) => {
+        const exact = available.find(m => m.id === id)
+        if (exact) return exact
+        const key = modelKey(id)
+        return available.find(m => modelKey(m.id) === key)
+    }
+
+    const direct = lookup(requested)
+    if (direct) return { id: direct.id }
+
+    const effortMatch = requested.match(EFFORT_SUFFIX)
+    if (effortMatch) {
+        const base = lookup(requested.replace(EFFORT_SUFFIX, ""))
+        if (base) return { id: base.id, effort: effortMatch[1] }
+    }
+
+    // "-thinking" variants have no separate Copilot id: use the base model
+    if (requested.endsWith("-thinking")) {
+        const base = lookup(requested.slice(0, -"-thinking".length))
+        if (base) return { id: base.id }
+    }
+
+    return { id: requested }
+}
 interface OpenAIResponse {
     choices: Array<{
         message?: { content?: string | null; tool_calls?: any[] }
@@ -104,23 +133,29 @@ export async function createCopilotCompletion(
     messages: ClaudeMessage[],
     tools?: ClaudeTool[],
     maxTokens?: number,
+    reasoningEffort?: CopilotReasoningEffort,
     signal?: AbortSignal
 ) {
     throwIfAborted(signal)
     const apiToken = await getCopilotApiToken(account, signal)
 
-    // Fetch and log available models (first call will log, subsequent uses cache)
-    await fetchCopilotModels(apiToken, signal)
+    const available = await fetchCopilotModels(apiToken, signal)
     throwIfAborted(signal)
 
-    // Map model name to Copilot-compatible format
-    const mappedModel = mapCopilotModelName(model)
+    // Resolve against the account's real model list (cached, fetched online)
+    const resolved = resolveCopilotModel(available, model)
+    const mappedModel = resolved.id
+    const info = available.find(m => m.id === mappedModel)
+    const supported = info ? getCopilotReasoningEfforts(info) : []
+    const effort = resolved.effort ?? reasoningEffort
+    const effectiveEffort = effort && supported.includes(effort) ? effort : undefined
 
     const requestBody = {
         model: mappedModel,
         messages: toOpenAIMessages(messages),
         tools: toOpenAITools(tools),
         max_tokens: maxTokens,
+        ...(effectiveEffort ? { reasoning_effort: effectiveEffort } : {}),
     }
 
     const response = await fetchInsecureJson(COPILOT_COMPLETIONS_URL, {

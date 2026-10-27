@@ -1,64 +1,31 @@
-import { AVAILABLE_MODELS, getAvailableModels } from "~/lib/config"
 import { buildCatalog, getAntigravityCatalog, setDiscoveredAntigravityModelIds } from "~/lib/model-catalog"
 import { isSeparateThinkingModelsEnabled, isHiddenCodexModel, CODEX_HIDDEN_MODELS } from "./config"
 import type { AuthProvider } from "~/services/auth/types"
 
 export { isHiddenCodexModel }
 
+let modelSyncHook: (() => Promise<void>) | null = null
+
+/** Registered by the routing route: pulls every provider's real model list online. */
+export function setModelSyncHook(hook: (() => Promise<void>) | null): void {
+    modelSyncHook = hook
+}
+
+export async function ensureProviderModelsSynced(): Promise<void> {
+    try {
+        await modelSyncHook?.()
+    } catch {
+        // best effort: routing falls back to whatever was discovered last
+    }
+}
+
 export interface ProviderModelOption {
     id: string
     label: string
 }
 
-const CODEX_MODELS: ProviderModelOption[] = [
-    { id: "gpt-5.3-max-high", label: "Codex - 5.3 Max (High)" },
-    { id: "gpt-5.3-max", label: "Codex - 5.3 Max" },
-    { id: "gpt-5.3", label: "Codex - 5.3" },
-    { id: "gpt-5.3-codex", label: "Codex - 5.3 Codex" },
-    { id: "gpt-5.2-max-high", label: "Codex - 5.2 Max (High)" },
-    { id: "gpt-5.2-max", label: "Codex - 5.2 Max" },
-    { id: "gpt-5.2", label: "Codex - 5.2" },
-    { id: "gpt-5.2-codex", label: "Codex - 5.2 Codex" },
-    { id: "gpt-5.1", label: "Codex - 5.1" },
-    { id: "gpt-5.1-codex", label: "Codex - 5.1 Codex" },
-    { id: "gpt-5.1-codex-max", label: "Codex - 5.1 Codex Max" },
-    { id: "gpt-5.1-codex-mini", label: "Codex - 5.1 Codex Mini" },
-    { id: "gpt-5", label: "Codex - 5" },
-    { id: "gpt-5-codex", label: "Codex - 5 Codex" },
-    { id: "gpt-5-codex-mini", label: "Codex - 5 Codex Mini" },
-]
-
-const COPILOT_STATIC_MODELS: ProviderModelOption[] = [
-    { id: "claude-opus-4-5-thinking", label: "Copilot - Opus 4.5 Thinking" },
-    { id: "claude-sonnet-4-5", label: "Copilot - Sonnet 4.5" },
-    { id: "claude-sonnet-4-5-thinking", label: "Copilot - Sonnet 4.5 Thinking" },
-    { id: "gpt-4o", label: "Copilot - GPT-4o" },
-    { id: "gpt-4o-mini", label: "Copilot - GPT-4o Mini" },
-    { id: "gpt-4.1", label: "Copilot - GPT-4.1" },
-    { id: "gpt-4.1-mini", label: "Copilot - GPT-4.1 Mini" },
-]
-
-const ZED_STATIC_MODELS: ProviderModelOption[] = []
-// Grok：标准 ModelName grok-build 对应实际模型 Grok 4.3（对外标签 Xbuild）
-const GROK_STATIC_MODELS: ProviderModelOption[] = [
-    { id: "grok-build", label: "Xbuild" },
-    { id: "grok-composer-2.5-fast", label: "Composer 2.5" },
-]
-const KIRO_STATIC_MODELS: ProviderModelOption[] = [
-    { id: "auto", label: "Kiro - Auto" },
-    { id: "claude-opus-4.7", label: "Kiro - Claude Opus 4.7" },
-    { id: "claude-opus-4.6", label: "Kiro - Claude Opus 4.6" },
-    { id: "claude-opus-4.5", label: "Kiro - Claude Opus 4.5" },
-    { id: "claude-sonnet-4.6", label: "Kiro - Claude Sonnet 4.6" },
-    { id: "claude-sonnet-4.5", label: "Kiro - Claude Sonnet 4.5" },
-    { id: "claude-sonnet-4.0", label: "Kiro - Claude Sonnet 4.0" },
-    { id: "claude-haiku-4.5", label: "Kiro - Claude Haiku 4.5" },
-    { id: "glm-5", label: "Kiro - GLM-5" },
-    { id: "deepseek-3.2", label: "Kiro - DeepSeek 3.2" },
-    { id: "minimax-m2.5", label: "Kiro - MiniMax M2.5" },
-    { id: "minimax-m2.1", label: "Kiro - MiniMax M2.1" },
-    { id: "qwen3-coder-next", label: "Kiro - Qwen3 Coder Next" },
-]
+// No hardcoded model lists: every provider's models are discovered online per account (see syncProviderModels).
+// Kiro is the only exception left: it has no listing API, so listKiroModelsForAccount (services/kiro/chat.ts) returns a fixed list.
 
 export function isInternalAntigravityModel(id: string): boolean {
     const lower = id.toLowerCase()
@@ -147,25 +114,26 @@ const PROVIDER_SPECS: Record<AuthProvider, ProviderModelSpec> = {
     },
     codex: {
         prefix: "Codex",
-        getStaticModels: () => CODEX_MODELS.filter(model => !CODEX_HIDDEN_MODELS.has(model.id)),
+        getStaticModels: () => [],
         filter: model => !CODEX_HIDDEN_MODELS.has(model.id),
         dynamicReplacesStatic: true,
     },
     copilot: {
         prefix: "Copilot",
-        getStaticModels: () => COPILOT_STATIC_MODELS,
+        getStaticModels: () => [],
+        dynamicReplacesStatic: true,
     },
     zed: {
         prefix: "Zed",
-        getStaticModels: () => ZED_STATIC_MODELS,
+        getStaticModels: () => [],
     },
     kiro: {
         prefix: "Kiro",
-        getStaticModels: () => KIRO_STATIC_MODELS,
+        getStaticModels: () => [],
     },
     grok: {
         prefix: "Grok",
-        getStaticModels: () => GROK_STATIC_MODELS,
+        getStaticModels: () => [],
     },
 }
 
@@ -223,16 +191,8 @@ export function isVariantModelId(id: string): boolean {
 /** Every known Antigravity model (catalog + discovered + static), with no per-family filtering. */
 export function getAllAntigravityModels(): ProviderModelOption[] {
     const store = getStore("antigravity")
-    const staticModels = getAvailableModels({ separateThinking: true, includeLegacy: true }).map(model => ({
-        id: model.id,
-        label: model.name,
-    }))
-    return mergeModelOptions(
-        getCatalogAntigravityModels(),
-        flattenDynamicModelsByAccount(store.byAccount),
-        store.global,
-        staticModels
-    )
+    const dynamic = mergeModelOptions(flattenDynamicModelsByAccount(store.byAccount), store.global)
+    return mergeModelOptions(getCatalogAntigravityModels(), dynamic)
 }
 
 export const setDynamicCopilotModels = (models: ProviderModelOption[]) => setDynamicProviderModels("copilot", models)
@@ -320,7 +280,7 @@ export function getProviderModelsForAccount(provider: AuthProvider, accountId: s
     }
 
     if (dynamic && dynamic.length > 0) {
-        return mergeModelOptions(dynamic, spec.getStaticModels())
+        return spec.dynamicReplacesStatic ? dynamic : mergeModelOptions(dynamic, spec.getStaticModels())
     }
     return getProviderModels(provider)
 }

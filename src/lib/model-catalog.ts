@@ -5,10 +5,9 @@
  * (claude-opus, claude-sonnet, gemini-pro, gemini-flash, gemini-flash-lite, gpt-oss, ...)
  * and resolves family/base aliases (e.g. `claude-opus`) to the newest native ID.
  * Every model stays exposed; older generations are not filtered out.
- * The static list in config.ts is only used as a seed before the first sync.
+ * No hardcoded seed: the catalog is empty until the first online sync.
  */
 
-import { BASE_OFFICIAL_MODELS, THINKING_VARIANT_MODELS } from "./config"
 
 export type ModelFamily =
     | "claude-opus"
@@ -272,8 +271,6 @@ export function buildCatalog(ids: string[]): AntigravityCatalog {
     return { base, variants, aliases }
 }
 
-const STATIC_IDS = [...BASE_OFFICIAL_MODELS, ...THINKING_VARIANT_MODELS].map(m => m.id)
-
 let remoteIds: string[] = []
 let cached: AntigravityCatalog | null = null
 
@@ -285,7 +282,7 @@ export function setDiscoveredAntigravityModelIds(ids: string[]): void {
 
 export function getAntigravityCatalog(): AntigravityCatalog {
     if (!cached) {
-        cached = buildCatalog(remoteIds.length > 0 ? remoteIds : STATIC_IDS)
+        cached = buildCatalog(remoteIds)
     }
     return cached
 }

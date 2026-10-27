@@ -64,6 +64,7 @@ mock.module("~/services/codex/chat", () => ({
 
 mock.module("~/services/copilot/chat", () => ({
     createCopilotCompletion: async () => ({ contentBlocks: [], stopReason: "end_turn", usage: {} }),
+    getCopilotReasoningEfforts: () => [],
 }))
 
 mock.module("~/services/auth/store", () => ({
@@ -80,7 +81,9 @@ async function getRouter() {
     return await import(`../src/services/routing/router.ts?${Date.now()}-${Math.random()}`)
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    const { setDynamicAntigravityModels } = await import("~/services/routing/models")
+    setDynamicAntigravityModels([{ id: "claude-opus-4-6-thinking", label: "Opus 4.6 Thinking" }])
     rateLimitMarkCalls = 0
     upstreamStatus = 404
     upstreamBody = "not found"

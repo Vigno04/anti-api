@@ -768,6 +768,15 @@
                         <input type="checkbox" id="setting-track-usage" class="toggle-switch" checked>
                     </label>
 
+                    <!-- Refresh Pricing -->
+                    <div class="flex items-center justify-between p-4 rounded-xl border border-gray-800">
+                        <div>
+                            <div class="text-gray-200 font-medium" data-i18n="settings.pricing">Model Pricing</div>
+                            <div id="pricing-status" class="text-gray-500 text-xs mt-0.5" data-i18n="settings.pricingDesc">Per-model prices used to estimate cost and quota value</div>
+                        </div>
+                        <button id="pricing-refresh-btn" onclick="refreshPricing()" class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-200 text-sm hover:border-cyan-500 transition-colors" data-i18n="settings.pricingRefresh">Update prices</button>
+                    </div>
+
                     <!-- Capture Logs -->
                     <label
                         class="flex items-center justify-between p-4 rounded-xl border border-gray-800 hover:border-gray-700 transition-colors cursor-pointer">
@@ -1263,6 +1272,10 @@
                 'settings.compactDesc': 'Reduce Antigravity cards to 2 bars',
                 'settings.trackUsage': 'Track Token Usage',
                 'settings.trackUsageDesc': 'Estimate cost based on token consumption',
+                'settings.pricing': 'Model Pricing',
+                'settings.pricingDesc': 'Per-model prices used to estimate cost and quota value',
+                'settings.pricingRefresh': 'Update prices',
+                'settings.pricingStatus': '{models} models, updated {date}',
                 'settings.captureLogs': 'Capture Logs',
                 'settings.captureLogsDesc': 'Store recent console logs for dashboard',
                 'settings.optimizeSort': 'Optimize Quota Sorting',
@@ -1461,6 +1474,10 @@
                 'settings.compactDesc': 'Antigravity 卡片只显示 2 个指标',
                 'settings.trackUsage': '跟踪 Token 用量',
                 'settings.trackUsageDesc': '根据 Token 消耗预估成本',
+                'settings.pricing': '模型价格',
+                'settings.pricingDesc': '用于估算成本和配额价值的各模型价格',
+                'settings.pricingRefresh': '更新价格',
+                'settings.pricingStatus': '{models} 个模型，更新于 {date}',
                 'settings.captureLogs': '捕获日志',
                 'settings.captureLogsDesc': '保存最近控制台日志供面板查看',
                 'settings.optimizeSort': '优化配额排序',
@@ -1660,6 +1677,10 @@
                 'settings.compactDesc': 'Riduci le schede Antigravity a 2 barre',
                 'settings.trackUsage': 'Traccia Utilizzo Token',
                 'settings.trackUsageDesc': 'Stima i costi in base al consumo di token',
+                'settings.pricing': 'Prezzi Modelli',
+                'settings.pricingDesc': 'Prezzi per modello usati per stimare costi e valore della quota',
+                'settings.pricingRefresh': 'Aggiorna prezzi',
+                'settings.pricingStatus': '{models} modelli, aggiornati {date}',
                 'settings.captureLogs': 'Cattura Log',
                 'settings.captureLogsDesc': 'Memorizza i log recenti per la dashboard',
                 'settings.optimizeSort': 'Ottimizza Ordinamento Quota',
@@ -1826,6 +1847,41 @@
             optimizeQuotaSort: false,
             captureLogs: false
         };
+
+        function renderPricingStatus(data) {
+            const el = document.getElementById('pricing-status');
+            if (!el || !data) return;
+            if (data.models > 0 && data.fetchedAt) {
+                el.textContent = t('settings.pricingStatus', { models: data.models, date: new Date(data.fetchedAt).toLocaleString() });
+            }
+        }
+
+        async function loadPricingStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/usage/pricing`);
+                if (res.ok) renderPricingStatus(await res.json());
+            } catch (e) { /* ignore */ }
+        }
+
+        async function refreshPricing() {
+            const btn = document.getElementById('pricing-refresh-btn');
+            if (btn) btn.disabled = true;
+            try {
+                const res = await fetch(`${API_BASE}/usage/pricing/refresh`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.success) {
+                    renderPricingStatus(data);
+                    showSettingsToast(t('settings.pricingStatus', { models: data.models, date: new Date(data.fetchedAt).toLocaleString() }));
+                    if (typeof loadUsage === 'function') loadUsage();
+                } else {
+                    showSettingsToast(t('settings.saveFailed'), true);
+                }
+            } catch (e) {
+                showSettingsToast(t('settings.saveFailed'), true);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
 
         async function loadSettings() {
             try {
@@ -2288,6 +2344,7 @@
         }
 
         async function initSettings() {
+            loadPricingStatus();
             const settings = await loadSettings();
             settings.language = settings.language || localStorage.getItem(LANGUAGE_STORAGE_KEY) || defaultSettings.language;
 
@@ -3278,7 +3335,18 @@
                                 <div class="progress-bar h-full rounded-full transition-all ${barClass}"
                                      style="width: ${percentage}%;"></div>
                             </div>
-                            <div class="flex items-center justify-between text-[10px] text-gray-500"><span>${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</span>${typeof bar.estimatedValueUsd === 'number' && bar.estimatedValueUsd > 0 && provider !== 'zed' ? `<span class="font-mono text-gray-400" title="Estimated remaining quota value (~$${Number(bar.valuePerPercentUsd || 0).toFixed(2)} per 1%)">~$${Number(bar.estimatedValueUsd).toFixed(2)}</span>` : ''}</div>
+                            <div class="flex items-center justify-between text-[10px] text-gray-500">
+                                <span>${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</span>
+                                ${provider !== 'zed' ? `
+                                    ${typeof bar.estimatedValueUsd === 'number' && bar.estimatedValueUsd > 0 ? `
+                                        <span class="font-mono text-gray-400" title="Quota: ~$${Number(bar.estimatedValueUsd).toFixed(2)} remaining / ~$${Number(bar.estimatedTotalValueUsd || (bar.valuePerPercentUsd ? bar.valuePerPercentUsd * 100 : 0)).toFixed(2)} total (~$${Number(bar.valuePerPercentUsd || 0).toFixed(2)} per 1%)">
+                                            ~$${Number(bar.estimatedValueUsd).toFixed(2)} / $${Number(bar.estimatedTotalValueUsd || (bar.valuePerPercentUsd ? bar.valuePerPercentUsd * 100 : 0)).toFixed(2)}
+                                        </span>
+                                    ` : `
+                                        <span class="text-gray-600 italic tracking-tight" title="Observing your local usage to calibrate quota dollar value">not enough data</span>
+                                    `}
+                                ` : ''}
+                            </div>
                         </div>
                     `;
                 }).join('');

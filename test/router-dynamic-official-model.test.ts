@@ -40,6 +40,7 @@ mock.module("~/services/codex/chat", () => ({
 
 mock.module("~/services/copilot/chat", () => ({
     createCopilotCompletion: async () => ({ contentBlocks: [], stopReason: "end_turn", usage: {} }),
+    getCopilotReasoningEfforts: () => [],
     isCopilotInsecureTlsEnabled: () => false,
     listCopilotModelsForAccount: async () => [],
 }))
@@ -84,6 +85,7 @@ test("official model aliases use one routing key", async () => {
 })
 
 test("streaming normalizes the dotted Copilot model before route selection", async () => {
+    setDynamicCopilotModels([{ id: "claude-sonnet-4.5", label: "Copilot - Claude Sonnet 4.5" }])
     const router = await import(`../src/services/routing/router.ts?${Date.now()}-${Math.random()}`)
     const stream = router.createRoutedCompletionStream({
         model: "claude-sonnet-4.5",

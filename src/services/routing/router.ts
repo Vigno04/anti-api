@@ -16,7 +16,7 @@ import { createGrokCompletion } from "~/services/grok/chat"
 import { authStore } from "~/services/auth/store"
 import { AUTH_PROVIDERS, type ProviderAccount, type AuthProvider } from "~/services/auth/types"
 import { loadRoutingConfig, type RoutingEntry, type RoutingConfig, type AccountRoutingEntry } from "./config"
-import { getProviderModels, isHiddenCodexModel } from "./models"
+import { ensureProviderModelsSynced, getProviderModels, isHiddenCodexModel } from "./models"
 import { isCacheAwareRoutingEnabled } from "~/services/settings"
 import {
     rankAccountCandidates,
@@ -587,7 +587,7 @@ async function createHostedProviderCompletion(
         return createCodexCompletion(account, model, request.messages, request.tools, request.maxTokens, request.reasoningEffort, request.signal)
     }
     if (provider === "copilot") {
-        return createCopilotCompletion(account, model, request.messages, request.tools, request.maxTokens, request.signal)
+        return createCopilotCompletion(account, model, request.messages, request.tools, request.maxTokens, request.reasoningEffort, request.signal)
     }
     if (provider === "zed") {
         return createZedCompletion(account, model, request.messages, request.tools, request.maxTokens, request.reasoningEffort, request.signal)
@@ -942,6 +942,7 @@ export async function createRoutedCompletion(request: RoutedRequest) {
     if (activeFlow) {
         return createFlowCompletionWithEntries(normalizedRequest, activeFlow.entries, activeFlow.flowKey)
     }
+    if (!isOfficialModel(normalizedModel)) await ensureProviderModelsSynced()
     if (isOfficialModel(normalizedModel)) {
         const accountEntries = resolveAccountRoutingEntries(config, normalizedModel)
         const useIntelligent = isCacheAwareRoutingEnabled() || (config.accountRouting?.smartSwitch ?? false)
@@ -1150,6 +1151,7 @@ export async function* createRoutedCompletionStream(request: RoutedRequest): Asy
         return
     }
 
+    if (!isOfficialModel(normalizedModel)) await ensureProviderModelsSynced()
     if (isOfficialModel(normalizedModel)) {
         const accountEntries = resolveAccountRoutingEntries(config, normalizedModel)
         const useIntelligent = isCacheAwareRoutingEnabled() || (config.accountRouting?.smartSwitch ?? false)

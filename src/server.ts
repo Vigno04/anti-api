@@ -11,7 +11,7 @@ import { messageRoutes } from "./routes/messages/route"
 import { openaiRoutes } from "./routes/openai/route"
 import { authRouter } from "./routes/auth/route"
 import { remoteRouter } from "./routes/remote/route"
-import { routingRouter } from "./routes/routing/route"
+import { routingRouter, syncProviderModels } from "./routes/routing/route"
 import { logsRouter } from "./routes/logs/route"
 import { updatesRouter } from "./routes/updates/route"
 import { getAggregatedQuota } from "./services/quota-aggregator"
@@ -33,6 +33,7 @@ import { safeErrorMessage } from "./lib/redaction"
 import { formatLogTime, getRequestLogContext, runWithRequestContext } from "./lib/logger"
 import { initLogCapture, setLogCaptureEnabled } from "./lib/log-buffer"
 import { getUsage, resetUsage } from "./services/usage-tracker"
+import { getPricingStatus, refreshModelPricing } from "./services/model-pricing"
 import { getPublicDir } from "./lib/public-dir"
 
 import {
@@ -305,6 +306,16 @@ server.get("/usage", (c) => {
     return c.json(getUsage())
 })
 
+server.get("/usage/pricing", (c) => {
+    return c.json(getPricingStatus())
+})
+
+// Pulls the latest per-model pricing from the online datasheet
+server.post("/usage/pricing/refresh", async (c) => {
+    const ok = await refreshModelPricing()
+    return c.json({ success: ok, ...getPricingStatus() }, ok ? 200 : 502)
+})
+
 server.post("/usage/reset", (c) => {
     resetUsage()
     return c.json({ success: true })
@@ -372,7 +383,9 @@ function computeModelsCatalog() {
 }
 
 // 模型列表处理函数 - 兼容 OpenAI 和 Anthropic 格式
-const modelsHandler = (c: any) => {
+const modelsHandler = async (c: any) => {
+    // Pull the real per-account model lists online (TTL-throttled) before answering
+    await syncProviderModels(Date.now(), 4000).catch(() => undefined)
     const now = new Date().toISOString()
     const { models } = computeModelsCatalog()
 

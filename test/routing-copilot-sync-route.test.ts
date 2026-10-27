@@ -66,6 +66,7 @@ mock.module("~/services/quota-aggregator", () => ({
 
 mock.module("~/services/copilot/chat", () => ({
     createCopilotCompletion: async () => ({ contentBlocks: [], stopReason: "end_turn", usage: {} }),
+    getCopilotReasoningEfforts: () => [],
     listCopilotModelsForAccount: async (account: ProviderAccount) => {
         syncedWithAccountIds.push(account.id)
         if (syncMode === "error") {
@@ -165,10 +166,10 @@ test("routing config syncs copilot models from the first available account", asy
     expect(res.status).toBe(200)
     expect(syncedWithAccountIds[0]).toBe("older-account")
     expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-5.2")).toBe(true)
-    expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-4o")).toBe(true)
+    expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-4o")).toBe(false)
 })
 
-test("routing config keeps static copilot models when dynamic sync fails", async () => {
+test("routing config has no copilot models when dynamic sync fails", async () => {
     addCopilotAccount("copilot-1", "2026-01-01T00:00:00.000Z")
     syncMode = "error"
 
@@ -178,18 +179,18 @@ test("routing config keeps static copilot models when dynamic sync fails", async
 
     expect(res.status).toBe(200)
     expect(syncedWithAccountIds.length).toBe(1)
-    expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-4o")).toBe(true)
+    expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-4o")).toBe(false)
     expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-5.2")).toBe(false)
 })
 
-test("routing config falls back to static copilot models when no copilot account exists", async () => {
+test("routing config exposes no hardcoded copilot models when no account exists", async () => {
     const routingRouter = await getRoutingRouter()
     const res = await routingRouter.request("/config")
     const data = await res.json()
 
     expect(res.status).toBe(200)
     expect(syncedWithAccountIds.length).toBe(0)
-    expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-4o")).toBe(true)
+    expect(data.models.copilot.some((model: { id: string }) => model.id === "gpt-4o")).toBe(false)
 })
 
 test("routing config returns quickly on slow copilot sync and updates on subsequent request", async () => {
@@ -229,7 +230,7 @@ test("routing config syncs codex models from available codex account", async () 
     expect(data.models.codex.some((model: { id: string }) => model.id === "gpt-5.3-codex")).toBe(true)
 })
 
-test("routing config keeps static codex models when codex sync fails", async () => {
+test("routing config has no codex models when codex sync fails", async () => {
     addCodexAccount("codex-a", "2026-01-01T00:00:00.000Z")
     codexSyncMode = "error"
 
@@ -239,5 +240,5 @@ test("routing config keeps static codex models when codex sync fails", async () 
 
     expect(res.status).toBe(200)
     expect(codexSyncedWithAccountIds.length).toBe(1)
-    expect(data.models.codex.some((model: { id: string }) => model.id === "gpt-5.3-codex")).toBe(true)
+    expect(data.models.codex.some((model: { id: string }) => model.id === "gpt-5.3-codex")).toBe(false)
 })

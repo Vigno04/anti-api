@@ -31,6 +31,7 @@ mock.module("~/services/antigravity/account-manager", () => ({
 
 mock.module("~/services/copilot/chat", () => ({
     createCopilotCompletion: async () => ({ contentBlocks: [], stopReason: "end_turn", usage: {} }),
+    getCopilotReasoningEfforts: () => [],
     listCopilotModelsForAccount: async (_account: ProviderAccount) => [],
 }))
 
