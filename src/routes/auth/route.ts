@@ -74,6 +74,40 @@ authRouter.post("/import", async (c) => {
 
             if (!accessToken && !refreshToken) continue
 
+            const providerType = (item.provider || item.type || "").toLowerCase()
+            if (providerType === "copilot" || providerType === "github-copilot") {
+                const login = item.login || item.id || name
+                authStore.saveAccount({
+                    id: item.id || login,
+                    provider: "copilot",
+                    login,
+                    label: item.label || item.displayName || login,
+                    accessToken: accessToken || "",
+                    refreshToken,
+                    expiresAt,
+                })
+                lastEmail = login
+                importedCount++
+                continue
+            }
+
+            if (providerType === "codex" || providerType === "chatgpt") {
+                const login = item.email || item.login || item.id || name
+                authStore.saveAccount({
+                    id: item.id || login,
+                    provider: "codex",
+                    email: item.email || login,
+                    login,
+                    label: item.label || item.displayName || login,
+                    accessToken: accessToken || "",
+                    refreshToken,
+                    expiresAt,
+                })
+                lastEmail = login
+                importedCount++
+                continue
+            }
+
             accountManager.addAccount({
                 id: email || `account-${Date.now()}`,
                 email,

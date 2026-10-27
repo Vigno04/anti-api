@@ -91,28 +91,31 @@ function toSummary(account: ProviderAccount): ProviderAccountSummary {
 function loadAccountFromFile(path: string): ProviderAccount | null {
     try {
         tightenPrivateFile(path)
-        const raw = JSON.parse(readFileSync(path, "utf-8")) as StoredAuthFile
-        const provider = storedTypeToProvider(raw.type)
-        if (!provider || !raw.access_token || !raw.id) {
+        const raw = JSON.parse(readFileSync(path, "utf-8")) as any
+        const typeStr = raw.type || raw.provider || ""
+        const provider = storedTypeToProvider(typeStr)
+        const accessToken = raw.access_token || raw.accessToken || raw.apiKey
+        const id = raw.id || raw.login || raw.email
+        if (!provider || !accessToken || !id) {
             return null
         }
         return {
-            id: raw.id,
+            id,
             provider,
             email: raw.email,
-            login: raw.login,
-            label: raw.label,
+            login: raw.login || (provider === "copilot" ? id : undefined),
+            label: raw.label || raw.displayName || (provider === "copilot" ? (raw.login || id) : undefined),
             proxy: raw.proxy,
-            accessToken: raw.access_token,
-            refreshToken: raw.refresh_token,
-            expiresAt: raw.expires_at,
-            projectId: raw.project_id,
-            organizationId: raw.organization_id,
-            serverUrl: raw.server_url,
-            authSource: raw.auth_source as ProviderAccount["authSource"],
+            accessToken,
+            refreshToken: raw.refresh_token || raw.refreshToken,
+            expiresAt: raw.expires_at || raw.expiresAt,
+            projectId: raw.project_id || raw.projectId,
+            organizationId: raw.organization_id || raw.organizationId,
+            serverUrl: raw.server_url || raw.serverUrl,
+            authSource: (raw.auth_source || raw.authSource) as ProviderAccount["authSource"],
             metadata: raw.metadata,
-            createdAt: raw.created_at,
-            updatedAt: raw.updated_at,
+            createdAt: raw.created_at || raw.createdAt,
+            updatedAt: raw.updated_at || raw.updatedAt,
         }
     } catch (error) {
         consola.warn("Failed to parse auth file:", path, safeErrorMessage(error))

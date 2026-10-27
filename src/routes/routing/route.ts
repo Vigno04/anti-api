@@ -202,8 +202,12 @@ function copilotModelOptions(remote: CopilotModelInfo[]): ProviderModelOption[] 
     for (const model of remote) {
         const name = model.name?.trim() || model.id
         options.push({ id: model.id, label: `Copilot - ${name}` })
-        for (const effort of getCopilotReasoningEfforts(model).filter(e => e === "low" || e === "medium" || e === "high")) {
+        const efforts = getCopilotReasoningEfforts(model).filter(e => e === "low" || e === "medium" || e === "high")
+        for (const effort of efforts) {
             options.push({ id: `${model.id}-${effort}`, label: `Copilot - ${name} (${effort})` })
+        }
+        if (model.id === "copilot-auto" || (efforts.includes("high") && !options.some(o => o.id === `${model.id}-thinking`))) {
+            options.push({ id: `${model.id}-thinking`, label: `Copilot - ${name} (thinking)` })
         }
     }
     return options

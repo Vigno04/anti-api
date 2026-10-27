@@ -250,11 +250,12 @@ export function getProviderModels(
         store.global
     )
 
-    if (spec.dynamicReplacesStatic) {
-        return mergedDynamic.length > 0 ? mergedDynamic : spec.getStaticModels()
-    }
+    const separateThinking = options?.includeAllVariants ?? isSeparateThinkingModelsEnabled()
+    const baseList = spec.dynamicReplacesStatic
+        ? (mergedDynamic.length > 0 ? mergedDynamic : spec.getStaticModels())
+        : mergeModelOptions(mergedDynamic, spec.getStaticModels())
 
-    return mergeModelOptions(mergedDynamic, spec.getStaticModels())
+    return separateThinking ? baseList : baseList.filter(m => !isVariantModelId(m.id))
 }
 
 export function getProviderModelsForAccount(provider: AuthProvider, accountId: string): ProviderModelOption[] {

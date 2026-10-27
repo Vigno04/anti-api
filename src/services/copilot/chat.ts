@@ -15,13 +15,16 @@ export function isCopilotInsecureTlsEnabled(): boolean {
     return COPILOT_INSECURE_TLS
 }
 
-const COPILOT_COMPLETIONS_URL = "https://api.githubcopilot.com/chat/completions"
+export const COPILOT_AUTO_MODEL_ID = "copilot-auto"
 const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
-const COPILOT_MODELS_URL = "https://api.githubcopilot.com/models"
+const DEFAULT_CAPI_BASE_URL = "https://api.individual.githubcopilot.com"
 
 interface CopilotTokenResponse {
     token: string
     expires_at?: number
+    endpoints?: {
+        api?: string
+    }
 }
 
 /** Copilot advertises low/medium/high and, per model, none/xhigh/max. */
@@ -45,26 +48,67 @@ export interface CopilotModelInfo {
     }
 }
 
-const tokenCache = new Map<string, { token: string; expiresAt: number }>()
+interface CachedCopilotToken {
+    token: string
+    expiresAt: number
+    capiBaseUrl: string
+}
+
+const tokenCache = new Map<string, CachedCopilotToken>()
 const modelsCache = new Map<string, { models: CopilotModelInfo[]; expiresAt: number }>()
 
-/** Models this account can actually use through chat/completions (what the Copilot picker shows). */
-function normalizeCopilotModels(models: CopilotModelInfo[]): CopilotModelInfo[] {
+function isInternalCopilotModel(id: string): boolean {
+    const lower = id.toLowerCase()
+    return lower.startsWith("text-embedding") ||
+        lower.startsWith("copilot-search") ||
+        lower.startsWith("exec-agent") ||
+        lower.endsWith("-nano") ||
+        lower.startsWith("mai-code") ||
+        lower.includes("trajectory")
+}
+
+/**
+ * Normalizes live models discovered from GitHub Copilot.
+ * - Always includes copilot-auto (with low/medium/high reasoning effort variants).
+ * - For user accounts, only models with model_picker_enabled: true (Pro/Enterprise) are exposed individually.
+ * - Free / Edu accounts have model_picker_enabled: false on all models, leaving copilot-auto as their only option (matching VS Code).
+ */
+export function normalizeCopilotModels(models: CopilotModelInfo[]): CopilotModelInfo[] {
     const deduped = new Map<string, CopilotModelInfo>()
-    const hasPolicy = models.some(m => m?.policy?.state === "enabled")
+
+    // Always include the Auto model
+    deduped.set(COPILOT_AUTO_MODEL_ID, {
+        id: COPILOT_AUTO_MODEL_ID,
+        name: "Auto",
+        model_picker_enabled: true,
+        capabilities: {
+            type: "chat",
+            supports: {
+                reasoning_effort: ["low", "medium", "high"],
+                tool_calls: true,
+                streaming: true,
+                vision: true,
+            },
+        },
+    })
 
     for (const model of models) {
         const id = model?.id?.trim()
         if (!id) continue
-        // model_picker_enabled is unreliable (false for every model on some accounts): policy.state is what gates usage
-        if (model.policy?.state === "disabled") continue
-        if (hasPolicy && model.policy?.state !== "enabled") continue
-        const type = model.capabilities?.type
-        if (type && type !== "chat") continue
-        if (model.supported_endpoints && model.supported_endpoints.length > 0
-            && !model.supported_endpoints.includes("/chat/completions")) continue // /responses-only models are not callable here
-        if (deduped.has(id)) continue
+        if (id === COPILOT_AUTO_MODEL_ID || id === "auto") continue
 
+        // Non-chat models (e.g. embeddings) are excluded
+        if (model.capabilities?.type && model.capabilities.type !== "chat") continue
+
+        // Internal subagents / utilities
+        if (isInternalCopilotModel(id)) continue
+
+        // Only include user-selectable models enabled for this account's plan:
+        // Pro / Enterprise users have model_picker_enabled: true and policy !== "disabled".
+        if (model.model_picker_enabled !== true) continue
+        if (model.policy?.state === "disabled") continue
+
+        if (deduped.has(id)) continue
         deduped.set(id, {
             ...model,
             id,
@@ -88,13 +132,30 @@ function modelKey(id: string): string {
 }
 
 /**
- * Resolves a requested id (e.g. `claude-sonnet-4-5`, `gpt-5.2-high`) to a model the account really has,
- * plus the reasoning effort encoded in the id. No hardcoded model table: the live /models list is the source of truth.
+ * Resolves a requested id (e.g. `copilot-auto`, `copilot-auto-high`, `claude-sonnet-4-5`) to a model the account really has,
+ * plus the reasoning effort and Auto tier encoded in the id.
  */
 export function resolveCopilotModel(
     available: CopilotModelInfo[],
     requested: string
-): { id: string; effort?: CopilotReasoningEffort } {
+): { id: string; effort?: CopilotReasoningEffort; isAuto?: boolean; tier?: "efficiency" | "balance" | "intelligence" } {
+    const lower = requested.trim().toLowerCase()
+
+    // Auto matching:
+    // "copilot-auto", "auto", "copilot-auto-low", "auto-low", etc.
+    if (lower === "copilot-auto" || lower === "auto") {
+        return { id: COPILOT_AUTO_MODEL_ID, isAuto: true }
+    }
+    if (lower === "copilot-auto-low" || lower === "auto-low") {
+        return { id: COPILOT_AUTO_MODEL_ID, effort: "low", isAuto: true, tier: "efficiency" }
+    }
+    if (lower === "copilot-auto-medium" || lower === "auto-medium") {
+        return { id: COPILOT_AUTO_MODEL_ID, effort: "medium", isAuto: true, tier: "balance" }
+    }
+    if (lower === "copilot-auto-high" || lower === "auto-high" || lower === "copilot-auto-thinking" || lower === "auto-thinking") {
+        return { id: COPILOT_AUTO_MODEL_ID, effort: "high", isAuto: true, tier: "intelligence" }
+    }
+
     const lookup = (id: string) => {
         const exact = available.find(m => m.id === id)
         if (exact) return exact
@@ -114,11 +175,12 @@ export function resolveCopilotModel(
     // "-thinking" variants have no separate Copilot id: use the base model
     if (requested.endsWith("-thinking")) {
         const base = lookup(requested.slice(0, -"-thinking".length))
-        if (base) return { id: base.id }
+        if (base) return { id: base.id, effort: "high" }
     }
 
     return { id: requested }
 }
+
 interface OpenAIResponse {
     choices: Array<{
         message?: { content?: string | null; tool_calls?: any[] }
@@ -127,56 +189,146 @@ interface OpenAIResponse {
     usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
 
-export async function createCopilotCompletion(
-    account: ProviderAccount,
-    model: string,
-    messages: ClaudeMessage[],
-    tools?: ClaudeTool[],
-    maxTokens?: number,
-    reasoningEffort?: CopilotReasoningEffort,
-    signal?: AbortSignal
-) {
-    throwIfAborted(signal)
-    const apiToken = await getCopilotApiToken(account, signal)
+function getCopilotChatHeaders(apiToken: string, sessionToken?: string): Record<string, string> {
+    return {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiToken}`,
+        "X-GitHub-Api-Version": "2026-08-01",
+        "Editor-Plugin-Version": "copilot-chat/0.71.0",
+        "Editor-Version": "vscode/1.143.1",
+        "Copilot-Integration-Id": "vscode-chat",
+        "User-Agent": "anti-api/1.0",
+        ...(sessionToken ? { "Copilot-Session-Token": sessionToken } : {}),
+    }
+}
 
-    const available = await fetchCopilotModels(apiToken, signal)
-    throwIfAborted(signal)
+function toResponsesInput(messages: ReturnType<typeof toOpenAIMessages>): any[] {
+    const input: any[] = []
 
-    // Resolve against the account's real model list (cached, fetched online)
-    const resolved = resolveCopilotModel(available, model)
-    const mappedModel = resolved.id
-    const info = available.find(m => m.id === mappedModel)
-    const supported = info ? getCopilotReasoningEfforts(info) : []
-    const effort = resolved.effort ?? reasoningEffort
-    const effectiveEffort = effort && supported.includes(effort) ? effort : undefined
+    for (const msg of messages) {
+        if (msg.role === "system") {
+            const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)
+            input.push({
+                type: "message",
+                role: "system",
+                content: [{ type: "input_text", text }],
+            })
+            continue
+        }
 
-    const requestBody = {
-        model: mappedModel,
-        messages: toOpenAIMessages(messages),
-        tools: toOpenAITools(tools),
-        max_tokens: maxTokens,
-        ...(effectiveEffort ? { reasoning_effort: effectiveEffort } : {}),
+        if (msg.role === "user") {
+            const contentParts: any[] = []
+            if (typeof msg.content === "string") {
+                contentParts.push({ type: "input_text", text: msg.content })
+            } else if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                    if (part.type === "text") {
+                        contentParts.push({ type: "input_text", text: part.text || "" })
+                    } else if (part.type === "image_url") {
+                        contentParts.push({ type: "input_image", image_url: part.image_url?.url || "" })
+                    }
+                }
+            }
+            input.push({
+                type: "message",
+                role: "user",
+                content: contentParts.length > 0 ? contentParts : [{ type: "input_text", text: "" }],
+            })
+            continue
+        }
+
+        if (msg.role === "assistant") {
+            const textParts: any[] = []
+            if (typeof msg.content === "string" && msg.content) {
+                textParts.push({ type: "output_text", text: msg.content })
+            } else if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                    if (part.type === "text" && part.text) {
+                        textParts.push({ type: "output_text", text: part.text })
+                    }
+                }
+            }
+            input.push({
+                type: "message",
+                role: "assistant",
+                content: textParts,
+            })
+            for (const toolCall of msg.tool_calls || []) {
+                input.push({
+                    type: "function_call",
+                    call_id: toolCall.id,
+                    name: toolCall.function?.name || "tool",
+                    arguments: typeof toolCall.function?.arguments === "string"
+                        ? toolCall.function.arguments
+                        : JSON.stringify(toolCall.function?.arguments || {}),
+                })
+            }
+            continue
+        }
+
+        if (msg.role === "tool") {
+            input.push({
+                type: "function_call_output",
+                call_id: msg.tool_call_id,
+                output: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || ""),
+            })
+        }
     }
 
-    const response = await fetchInsecureJson(COPILOT_COMPLETIONS_URL, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiToken}`,
-            "User-Agent": "anti-api/1.0",
-            "Editor-Version": "vscode/1.95.0",
-            "Editor-Plugin-Version": "copilot/1.300.0",
+    return input
+}
+
+function buildCompletionFromResponses(payload: any): OpenAIResponse {
+    const output = Array.isArray(payload?.output) ? payload.output : []
+    const textParts: string[] = []
+    const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = []
+
+    for (const item of output) {
+        if (item?.type === "message" && Array.isArray(item.content)) {
+            for (const content of item.content) {
+                if ((content?.type === "output_text" || content?.type === "text") && typeof content.text === "string") {
+                    textParts.push(content.text)
+                }
+            }
+        } else if (item?.type === "function_call") {
+            toolCalls.push({
+                id: item.call_id || item.id || `tool_${crypto.randomUUID().slice(0, 8)}`,
+                type: "function",
+                function: {
+                    name: item.name || "tool",
+                    arguments: typeof item.arguments === "string"
+                        ? item.arguments
+                        : JSON.stringify(item.arguments || {}),
+                },
+            })
+        } else if (item?.type === "output_text" && typeof item.text === "string") {
+            textParts.push(item.text)
+        }
+    }
+
+    if (textParts.length === 0 && typeof payload?.output_text === "string") {
+        textParts.push(payload.output_text)
+    }
+
+    return {
+        choices: [
+            {
+                message: {
+                    content: textParts.join(""),
+                    tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+                },
+                finish_reason: payload?.status === "completed" ? "stop" : (payload?.stop_reason || null),
+            },
+        ],
+        usage: {
+            prompt_tokens: payload?.usage?.input_tokens || 0,
+            completion_tokens: payload?.usage?.output_tokens || 0,
         },
-        body: JSON.stringify(requestBody),
-        signal,
-    })
-
-    if (response.status < 200 || response.status >= 300) {
-        consola.error(`Copilot error ${response.status} for model ${mappedModel}`)
-        throw new UpstreamError("copilot", response.status, response.text, undefined)
     }
+}
 
-    const data = response.data as OpenAIResponse
+function toProviderCompletion(data: OpenAIResponse, accountId: string) {
+    authStore.markSuccess("copilot", accountId)
     const choice = data?.choices?.[0]
     const content = choice?.message?.content || ""
     const toolCalls = choice?.message?.tool_calls || []
@@ -196,8 +348,6 @@ export async function createCopilotCompletion(
         contentBlocks.push({ type: "text" as const, text: content })
     }
 
-    authStore.markSuccess("copilot", account.id)
-
     return {
         contentBlocks,
         stopReason: toolCalls.length > 0 ? "tool_use" : mapFinishReason(choice?.finish_reason),
@@ -208,16 +358,154 @@ export async function createCopilotCompletion(
     }
 }
 
-export async function listCopilotModelsForAccount(account: ProviderAccount, signal?: AbortSignal): Promise<CopilotModelInfo[]> {
-    const apiToken = await getCopilotApiToken(account, signal)
-    return fetchCopilotModels(apiToken, signal)
+export async function createCopilotCompletion(
+    account: ProviderAccount,
+    model: string,
+    messages: ClaudeMessage[],
+    tools?: ClaudeTool[],
+    maxTokens?: number,
+    reasoningEffort?: CopilotReasoningEffort,
+    signal?: AbortSignal
+) {
+    throwIfAborted(signal)
+    const { token: apiToken, capiBaseUrl } = await getCopilotApiTokenInfo(account, signal)
+    const available = await fetchCopilotModels(apiToken, capiBaseUrl, signal)
+    throwIfAborted(signal)
+
+    const resolved = resolveCopilotModel(available, model)
+
+    // Handle Copilot Auto mode (via POST /auto + /responses)
+    if (resolved.isAuto) {
+        let tier: "efficiency" | "balance" | "intelligence" = "balance"
+        let effectiveEffort: CopilotReasoningEffort = "medium"
+
+        if (resolved.tier) {
+            tier = resolved.tier
+            effectiveEffort = resolved.effort || (tier === "efficiency" ? "low" : tier === "intelligence" ? "high" : "medium")
+        } else if (reasoningEffort === "low") {
+            tier = "efficiency"
+            effectiveEffort = "low"
+        } else if (reasoningEffort === "high" || reasoningEffort === "xhigh" || reasoningEffort === "max") {
+            tier = "intelligence"
+            effectiveEffort = "high"
+        } else if (reasoningEffort === "medium") {
+            tier = "balance"
+            effectiveEffort = "medium"
+        }
+
+        // Get user prompt text for /auto negotiation
+        const lastUser = [...messages].reverse().find(m => m.role === "user")
+        let promptText = ""
+        if (typeof lastUser?.content === "string") {
+            promptText = lastUser.content
+        } else if (Array.isArray(lastUser?.content)) {
+            promptText = lastUser.content.filter(p => p.type === "text").map(p => (p as any).text).join(" ")
+        }
+        if (!promptText.trim()) promptText = "Hello"
+
+        // 1. Negotiate model and session token with Copilot /auto
+        const autoResponse = await fetchInsecureJson(`${capiBaseUrl}/auto`, {
+            method: "POST",
+            headers: getCopilotChatHeaders(apiToken),
+            body: JSON.stringify({
+                prompt: promptText.slice(0, 1000),
+                tier,
+            }),
+            signal,
+        })
+
+        if (autoResponse.status >= 200 && autoResponse.status < 300 && autoResponse.data?.session_token) {
+            const sessionToken = autoResponse.data.session_token
+            const selectedModel = autoResponse.data.selected_model
+            const selectedModelId = selectedModel?.id || "gpt-5.6-luna"
+            const supportsResponses = selectedModel?.supported_endpoints?.includes("/responses") ?? true
+
+            if (supportsResponses) {
+                // 2. Call modern /responses endpoint with Copilot-Session-Token
+                const openAiMessages = toOpenAIMessages(messages)
+                const openAiTools = toOpenAITools(tools)
+                const responsesTools = openAiTools?.map(t => ({
+                    type: "function",
+                    name: t.function.name,
+                    description: t.function.description,
+                    parameters: t.function.parameters,
+                }))
+
+                const requestBody = {
+                    model: selectedModelId,
+                    input: toResponsesInput(openAiMessages),
+                    ...(responsesTools && responsesTools.length > 0 ? { tools: responsesTools } : {}),
+                    ...(maxTokens ? { max_output_tokens: maxTokens } : {}),
+                    reasoning: { effort: effectiveEffort, summary: "auto" },
+                }
+
+                const response = await fetchInsecureJson(`${capiBaseUrl}/responses`, {
+                    method: "POST",
+                    headers: {
+                        ...getCopilotChatHeaders(apiToken, sessionToken),
+                        "Openai-Intent": "conversation-panel",
+                    },
+                    body: JSON.stringify(requestBody),
+                    signal,
+                })
+
+                if (response.status < 200 || response.status >= 300) {
+                    consola.error(`Copilot /responses error ${response.status} for ${selectedModelId}`)
+                    throw new UpstreamError("copilot", response.status, response.text, undefined)
+                }
+
+                const openAiResp = buildCompletionFromResponses(response.data)
+                return toProviderCompletion(openAiResp, account.id)
+            }
+        }
+    }
+
+    // Standard completion (for specific user-selected Pro models or fallback)
+    const mappedModel = resolved.id === COPILOT_AUTO_MODEL_ID ? "gpt-4o" : resolved.id
+    const info = available.find(m => m.id === mappedModel)
+    const supported = info ? getCopilotReasoningEfforts(info) : []
+    const effort = resolved.effort ?? reasoningEffort
+    const effectiveEffort = effort && supported.includes(effort) ? effort : undefined
+
+    const requestBody = {
+        model: mappedModel,
+        messages: toOpenAIMessages(messages),
+        tools: toOpenAITools(tools),
+        max_tokens: maxTokens,
+        ...(effectiveEffort ? { reasoning_effort: effectiveEffort } : {}),
+    }
+
+    const response = await fetchInsecureJson(`${capiBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: getCopilotChatHeaders(apiToken),
+        body: JSON.stringify(requestBody),
+        signal,
+    })
+
+    if (response.status < 200 || response.status >= 300) {
+        consola.error(`Copilot error ${response.status} for model ${mappedModel}`)
+        throw new UpstreamError("copilot", response.status, response.text, undefined)
+    }
+
+    const data = response.data as OpenAIResponse
+    return toProviderCompletion(data, account.id)
 }
 
-async function getCopilotApiToken(account: ProviderAccount, signal?: AbortSignal): Promise<string> {
+export async function listCopilotModelsForAccount(account: ProviderAccount, signal?: AbortSignal): Promise<CopilotModelInfo[]> {
+    const { token: apiToken, capiBaseUrl } = await getCopilotApiTokenInfo(account, signal)
+    return fetchCopilotModels(apiToken, capiBaseUrl, signal)
+}
+
+export async function getCopilotApiToken(account: ProviderAccount, signal?: AbortSignal): Promise<string> {
+    const info = await getCopilotApiTokenInfo(account, signal)
+    return info.token
+}
+
+async function getCopilotApiTokenInfo(account: ProviderAccount, signal?: AbortSignal): Promise<{ token: string; capiBaseUrl: string }> {
     throwIfAborted(signal)
     const cached = tokenCache.get(account.id)
     if (cached && cached.expiresAt > Date.now()) {
-        return cached.token
+        return { token: cached.token, capiBaseUrl: cached.capiBaseUrl }
     }
 
     const response = await fetchInsecureJson(COPILOT_TOKEN_URL, {
@@ -236,8 +524,9 @@ async function getCopilotApiToken(account: ProviderAccount, signal?: AbortSignal
     }
 
     const expiresAt = data.expires_at ? data.expires_at * 1000 : Date.now() + 10 * 60 * 1000
-    tokenCache.set(account.id, { token: data.token, expiresAt })
-    return data.token
+    const capiBaseUrl = data.endpoints?.api?.replace(/\/$/, "") || DEFAULT_CAPI_BASE_URL
+    tokenCache.set(account.id, { token: data.token, expiresAt, capiBaseUrl })
+    return { token: data.token, capiBaseUrl }
 }
 
 function safeParse(value: string | undefined): any {
@@ -257,7 +546,7 @@ function mapFinishReason(reason?: string | null): string {
     return reason
 }
 
-async function fetchCopilotModels(apiToken: string, signal?: AbortSignal): Promise<CopilotModelInfo[]> {
+async function fetchCopilotModels(apiToken: string, capiBaseUrl: string = DEFAULT_CAPI_BASE_URL, signal?: AbortSignal): Promise<CopilotModelInfo[]> {
     throwIfAborted(signal)
     const cached = modelsCache.get(apiToken)
     if (cached && cached.expiresAt > Date.now()) {
@@ -265,21 +554,15 @@ async function fetchCopilotModels(apiToken: string, signal?: AbortSignal): Promi
     }
 
     try {
-        const response = await fetchInsecureJson(COPILOT_MODELS_URL, {
+        const response = await fetchInsecureJson(`${capiBaseUrl}/models`, {
             method: "GET",
-            headers: {
-                Authorization: `Bearer ${apiToken}`,
-                "Accept": "application/json",
-                "User-Agent": "GithubCopilot/1.0",
-                "Editor-Version": "vscode/1.100.0",
-                "Editor-Plugin-Version": "copilot/1.300.0",
-            },
+            headers: getCopilotChatHeaders(apiToken),
             signal,
         })
 
         if (response.status < 200 || response.status >= 300) {
             consola.warn("Failed to fetch Copilot models:", response.status)
-            return []
+            return normalizeCopilotModels([])
         }
 
         const data = response.data as { data: CopilotModelInfo[] }
@@ -292,7 +575,7 @@ async function fetchCopilotModels(apiToken: string, signal?: AbortSignal): Promi
             throw createAbortError()
         }
         consola.warn("Error fetching Copilot models:", safeErrorMessage(error))
-        return []
+        return normalizeCopilotModels([])
     }
 }
 
@@ -329,68 +612,42 @@ async function fetchInsecureJson(
             reject(error)
         }
         const onAbort = () => {
-            if (settled) return
-            req?.destroy()
+            try { req.destroy(createAbortError()) } catch { }
             rejectOnce(createAbortError())
+        }
+
+        if (options.signal) {
+            options.signal.addEventListener("abort", onAbort, { once: true })
         }
 
         req = https.request(
             {
-                protocol: target.protocol,
                 hostname: target.hostname,
                 port: target.port || 443,
                 path: `${target.pathname}${target.search}`,
                 method,
                 headers,
                 agent,
-                rejectUnauthorized: agent ? false : true,
-                timeout: 30000,
             },
             (res) => {
-                let body = ""
-                res.on("data", (chunk) => {
-                    body += chunk
-                })
+                const chunks: Buffer[] = []
+                res.on("data", chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
                 res.on("end", () => {
+                    const text = Buffer.concat(chunks).toString("utf-8")
                     let data: any = null
-                    if (body) {
-                        try {
-                            data = JSON.parse(body)
-                        } catch {
-                            data = null
-                        }
-                    }
-                    resolveOnce({
-                        status: res.statusCode || 0,
-                        data,
-                        text: body,
-                    })
+                    try { data = JSON.parse(text) } catch { }
+                    resolveOnce({ status: res.statusCode || 0, data, text })
                 })
             }
         )
 
-        req.on("error", (error) => {
-            if (options.signal?.aborted || isAbortError(error)) {
+        req.on("error", (err) => {
+            if (options.signal?.aborted || isAbortError(err)) {
                 rejectOnce(createAbortError())
-                return
+            } else {
+                rejectOnce(err)
             }
-            if (!COPILOT_INSECURE_TLS && /certificate|self signed/i.test(error.message)) {
-                rejectOnce(new Error("Copilot TLS certificate error. Set ANTI_API_COPILOT_INSECURE_TLS=1 to bypass."))
-                return
-            }
-            rejectOnce(error)
         })
-        req.on("timeout", () => {
-            req.destroy(new Error("Request timed out"))
-        })
-
-        if (options.signal) {
-            if (options.signal.aborted) {
-                onAbort()
-                return
-            }
-            options.signal.addEventListener("abort", onAbort, { once: true })
-        }
 
         if (options.body) {
             req.write(options.body)

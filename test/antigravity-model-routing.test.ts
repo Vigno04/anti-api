@@ -3,10 +3,10 @@ import { isAntigravityModelSupportedForAccount, markAntigravityModelUnsupported 
 import { updateCachedAntigravityModelsForAccount } from "~/services/quota-aggregator"
 
 test("isAntigravityModelSupportedForAccount correctly checks account models", () => {
-    const accVigna = "test-davivigna@gmail.com"
-    const accHelilo = "test-davixhelilo@gmail.com"
+    const acc1 = "account-1@example.com"
+    const acc2 = "account-2@example.com"
 
-    updateCachedAntigravityModelsForAccount(accVigna, [
+    updateCachedAntigravityModelsForAccount(acc1, [
         "gemini-2.5-flash-lite",
         "claude-opus-5-5-low",
         "claude-opus-5-5-medium",
@@ -18,7 +18,7 @@ test("isAntigravityModelSupportedForAccount correctly checks account models", ()
         "gemini-2.5-pro",
     ])
 
-    updateCachedAntigravityModelsForAccount(accHelilo, [
+    updateCachedAntigravityModelsForAccount(acc2, [
         "gemini-3.8-flash-tiered",
         "claude-opus-4-6-thinking",
         "claude-sonnet-4-6",
@@ -27,32 +27,32 @@ test("isAntigravityModelSupportedForAccount correctly checks account models", ()
     ])
 
     // Opus 5.5 should be supported on Vigna, NOT on Helilo
-    expect(isAntigravityModelSupportedForAccount(accVigna, "claude-opus-5-5")).toBe(true)
-    expect(isAntigravityModelSupportedForAccount(accVigna, "claude-opus-5-5-thinking")).toBe(true)
-    expect(isAntigravityModelSupportedForAccount(accVigna, "claude-opus-5-5-medium")).toBe(true)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "claude-opus-5-5")).toBe(false)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "claude-opus-5-5-thinking")).toBe(false)
+    expect(isAntigravityModelSupportedForAccount(acc1, "claude-opus-5-5")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc1, "claude-opus-5-5-thinking")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc1, "claude-opus-5-5-medium")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc2, "claude-opus-5-5")).toBe(false)
+    expect(isAntigravityModelSupportedForAccount(acc2, "claude-opus-5-5-thinking")).toBe(false)
 
     // Sonnet 5.5 should be supported on Vigna, NOT on Helilo
-    expect(isAntigravityModelSupportedForAccount(accVigna, "claude-sonnet-5-5")).toBe(true)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "claude-sonnet-5-5")).toBe(false)
+    expect(isAntigravityModelSupportedForAccount(acc1, "claude-sonnet-5-5")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc2, "claude-sonnet-5-5")).toBe(false)
 
     // Opus 4.6 should be supported on Helilo, NOT on Vigna
-    expect(isAntigravityModelSupportedForAccount(accVigna, "claude-opus-4-6")).toBe(false)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "claude-opus-4-6")).toBe(true)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "claude-opus-4-6-thinking")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc1, "claude-opus-4-6")).toBe(false)
+    expect(isAntigravityModelSupportedForAccount(acc2, "claude-opus-4-6")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc2, "claude-opus-4-6-thinking")).toBe(true)
 
     // Gemini 3.8 flash should be supported on both
-    expect(isAntigravityModelSupportedForAccount(accVigna, "gemini-3.8-flash")).toBe(true)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "gemini-3.8-flash")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc1, "gemini-3.8-flash")).toBe(true)
+    expect(isAntigravityModelSupportedForAccount(acc2, "gemini-3.8-flash")).toBe(true)
 
     // Gemini 4 Argon has only -disabled on Helilo, absent on Vigna -> false on both
-    expect(isAntigravityModelSupportedForAccount(accVigna, "gemini-4-argon")).toBe(false)
-    expect(isAntigravityModelSupportedForAccount(accHelilo, "gemini-4-argon")).toBe(false)
+    expect(isAntigravityModelSupportedForAccount(acc1, "gemini-4-argon")).toBe(false)
+    expect(isAntigravityModelSupportedForAccount(acc2, "gemini-4-argon")).toBe(false)
 
     // Negative caching: mark model unsupported dynamically
-    markAntigravityModelUnsupported(accVigna, "gemini-3.8-flash")
-    expect(isAntigravityModelSupportedForAccount(accVigna, "gemini-3.8-flash")).toBe(false)
+    markAntigravityModelUnsupported(acc1, "gemini-3.8-flash")
+    expect(isAntigravityModelSupportedForAccount(acc1, "gemini-3.8-flash")).toBe(false)
 })
 
 test("resolveAccountRoutingEntries filters out accounts not supporting the requested model", async () => {
@@ -61,8 +61,8 @@ test("resolveAccountRoutingEntries filters out accounts not supporting the reque
     const { authStore } = await import("~/services/auth/store")
 
     // Register accounts in authStore & accountManager
-    const acc1 = { id: "acc-vigna@test.com", provider: "antigravity" as const, email: "acc-vigna@test.com", accessToken: "t", refreshToken: "r", expiresAt: Date.now() + 10000 }
-    const acc2 = { id: "acc-helilo@test.com", provider: "antigravity" as const, email: "acc-helilo@test.com", accessToken: "t", refreshToken: "r", expiresAt: Date.now() + 10000 }
+    const acc1 = { id: "acc-1@example.com", provider: "antigravity" as const, email: "acc-1@example.com", accessToken: "t", refreshToken: "r", expiresAt: Date.now() + 10000 }
+    const acc2 = { id: "acc-2@example.com", provider: "antigravity" as const, email: "acc-2@example.com", accessToken: "t", refreshToken: "r", expiresAt: Date.now() + 10000 }
     authStore.saveAccount(acc1)
     authStore.saveAccount(acc2)
     accountManager.addAccount({ id: acc1.id, email: acc1.email, accessToken: "t", refreshToken: "r", expiresAt: Date.now() + 10000 })

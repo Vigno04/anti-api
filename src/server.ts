@@ -413,6 +413,7 @@ server.get("/models", modelsHandler)  // 无前缀版本 for GUI tools
 
 // API 仪表盘模型目录与实时状态
 server.get("/api/models-catalog", async (c: any) => {
+    await syncProviderModels(Date.now(), 4000).catch(() => undefined)
     const routingConfig = loadRoutingConfig()
     const settings = loadSettings()
 
