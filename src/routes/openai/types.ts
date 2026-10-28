@@ -69,7 +69,7 @@ export interface OpenAIChatCompletionResponse {
 export interface OpenAIChoice {
     index: number
     message: OpenAIMessage
-    finish_reason: "stop" | "length" | "tool_calls" | null
+    finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null
 }
 
 export interface OpenAIUsage {
@@ -90,5 +90,5 @@ export interface OpenAIStreamChunk {
 export interface OpenAIStreamChoice {
     index: number
     delta: Partial<OpenAIMessage>
-    finish_reason: "stop" | "length" | "tool_calls" | null
+    finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null
 }

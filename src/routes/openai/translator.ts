@@ -346,11 +346,12 @@ export function translateTools(tools?: OpenAITool[]): ClaudeTool[] | undefined {
     })
 }
 
-export function mapStopReason(anthropicReason: string): "stop" | "length" | "tool_calls" | null {
+export function mapStopReason(anthropicReason: string): "stop" | "length" | "tool_calls" | "content_filter" | null {
     switch (anthropicReason) {
         case "end_turn": return "stop"
         case "tool_use": return "tool_calls"
         case "max_tokens": return "length"
+        case "content_filter": return "content_filter"
         default: return "stop"
     }
 }

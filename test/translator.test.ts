@@ -93,5 +93,6 @@ test("mapStopReason converts Anthropic reasons to OpenAI format", () => {
     expect(mapStopReason("end_turn")).toBe("stop")
     expect(mapStopReason("tool_use")).toBe("tool_calls")
     expect(mapStopReason("max_tokens")).toBe("length")
+    expect(mapStopReason("content_filter")).toBe("content_filter")
     expect(mapStopReason("unknown")).toBe("stop")
 })

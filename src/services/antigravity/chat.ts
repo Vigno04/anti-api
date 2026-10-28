@@ -832,6 +832,18 @@ export async function claudeToAntigravity(
     }
 }
 
+function mapGoogleFinishReason(reason?: string, hasToolUse = false): string {
+    if (hasToolUse) return "tool_use"
+    if (!reason) return "end_turn"
+    const upper = reason.toUpperCase()
+    if (upper === "STOP") return "end_turn"
+    if (upper === "MAX_TOKENS") return "max_tokens"
+    if (upper === "SAFETY" || upper === "BLOCKLIST" || upper === "PROHIBITED_CONTENT" || upper === "SPII" || upper === "RECITATION") {
+        return "content_filter"
+    }
+    return "end_turn"
+}
+
 function parseApiResponse(rawResponse: string, sessionKey?: string, model?: string): ChatResponse {
     let chunks: any[] = []
     const trimmed = rawResponse.trim()
@@ -845,11 +857,20 @@ function parseApiResponse(rawResponse: string, sessionKey?: string, model?: stri
     const contentBlocks: ContentBlock[] = []
     let hasToolUse = false
     let latestThoughtSignature: string | undefined
+    let latestFinishReason: string | undefined
+    let blockReason: string | undefined
 
     for (const chunk of chunks) {
-        const candidate = chunk.response?.candidates?.[0]
+        const resp = chunk.response || chunk
+        if (resp?.promptFeedback?.blockReason) {
+            blockReason = resp.promptFeedback.blockReason
+        }
+        const candidate = resp?.candidates?.[0]
         const candSig = candidate?.thoughtSignature || candidate?.thought_signature
         if (candSig) latestThoughtSignature = candSig
+        if (candidate?.finishReason || candidate?.finish_reason) {
+            latestFinishReason = candidate.finishReason || candidate.finish_reason
+        }
 
         const parts = candidate?.content?.parts || []
         for (const part of parts) {
@@ -887,7 +908,29 @@ function parseApiResponse(rawResponse: string, sessionKey?: string, model?: stri
         }
     }
 
-    if (contentBlocks.length === 0) contentBlocks.push({ type: "text", text: "" })
+    if (blockReason) {
+        throw new UpstreamError(
+            "antigravity",
+            400,
+            `Prompt blocked by upstream safety policy: ${blockReason}`
+        )
+    }
+
+    const stopReason = mapGoogleFinishReason(latestFinishReason, hasToolUse)
+
+    if (contentBlocks.length === 0 && !hasToolUse) {
+        if (stopReason === "content_filter") {
+            contentBlocks.push({ type: "text", text: "Response filtered by upstream content policy." })
+        } else {
+            throw new UpstreamError(
+                "antigravity",
+                502,
+                latestFinishReason
+                    ? `Upstream model ended with finishReason: ${latestFinishReason} without generating content`
+                    : "Upstream model returned empty response without content"
+            )
+        }
+    }
 
     const usage = lastChunk.response.usageMetadata || lastChunk.usageMetadata
     const promptTokens = usage?.promptTokenCount || 0
@@ -897,7 +940,7 @@ function parseApiResponse(rawResponse: string, sessionKey?: string, model?: stri
     }
     return {
         contentBlocks,
-        stopReason: hasToolUse ? "tool_use" : "end_turn",
+        stopReason,
         usage: {
             inputTokens: promptTokens - cachedTokens,
             outputTokens: (usage?.candidatesTokenCount || 0) + (usage?.thoughtsTokenCount || 0),
@@ -1670,6 +1713,8 @@ export async function* createChatCompletionStreamWithOptions(
 
         yield buildMessageStart(request.model)
 
+        let latestFinishReason: string | undefined
+
         for await (const chunkStr of sseStream) {
             let chunk: any
             try {
@@ -1679,9 +1724,19 @@ export async function* createChatCompletionStreamWithOptions(
             }
 
             const responseData = chunk.response || chunk
+            if (responseData?.promptFeedback?.blockReason) {
+                throw new UpstreamError(
+                    "antigravity",
+                    400,
+                    `Prompt blocked by upstream safety policy: ${responseData.promptFeedback.blockReason}`
+                )
+            }
             const candidate = responseData?.candidates?.[0]
             const candSig = candidate?.thoughtSignature || candidate?.thought_signature
             if (candSig) latestThoughtSignature = candSig
+            if (candidate?.finishReason || candidate?.finish_reason) {
+                latestFinishReason = candidate.finishReason || candidate.finish_reason
+            }
 
             const parts = candidate?.content?.parts || []
 
@@ -1750,7 +1805,22 @@ export async function* createChatCompletionStreamWithOptions(
         if (!hasToolUse && request.toolChoice?.type === "tool") {
             consola.warn(`Tool choice "${request.toolChoice.name || "unknown"}" requested but no tool_use returned`)
         }
-        const stopReason = hasToolUse ? "tool_use" : "end_turn"
+        const stopReason = mapGoogleFinishReason(latestFinishReason, hasToolUse)
+        if (!textBlockStarted && !hasToolUse) {
+            if (stopReason === "content_filter") {
+                yield buildContentBlockStart(blockIndex, "text")
+                yield buildTextDelta(blockIndex, "Response filtered by upstream content policy.")
+                yield buildContentBlockStop(blockIndex)
+            } else {
+                throw new UpstreamError(
+                    "antigravity",
+                    502,
+                    latestFinishReason
+                        ? `Upstream model ended with finishReason: ${latestFinishReason} without generating content`
+                        : "Upstream model returned empty response without content"
+                )
+            }
+        }
         yield buildMessageDelta(stopReason, {
             inputTokens: streamInputTokens,
             cacheReadTokens: streamCacheReadTokens,
